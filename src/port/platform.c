@@ -1,4 +1,5 @@
 #include "platform.h"
+#include "pal_config.h"
 
 #include "bda_graphics.h"
 #include "bda_input.h"
@@ -7,6 +8,7 @@
 #include "bda_window.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,6 +27,8 @@ static unsigned g_sampled_keys;
 static unsigned g_latched_keys;
 static uint16_t *g_pixels;
 static bda_gui_picture_t g_picture;
+
+int pal9588_pak_last_error(void);
 
 static unsigned read_input_keys(void)
 {
@@ -404,7 +408,12 @@ void PAL9588_FatalOutput(const char *message)
     unsigned previous;
     unsigned keys;
     void *old_object;
-    (void)message;
+    FILE *log = fopen(PAL_9588_DATA_PATH "PALFATAL.LOG", "wb");
+    if (log) {
+        fputs(message ? message : "unknown fatal error", log);
+        fprintf(log, "palpak_error=%d\n", pal9588_pak_last_error());
+        fclose(log);
+    }
     if (!g_pixels || !g_draw || !g_draw_object) return;
     {
         unsigned index;

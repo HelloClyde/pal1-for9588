@@ -1,7 +1,7 @@
 # 参与贡献
 
-感谢参与 SDLPAL for BBK 9588。提交修改前，请确认代码可以在不包含《仙剑奇侠传》
-商业数据的情况下完成构建和基本启动测试。
+感谢参与 SDLPAL for BBK 9588。提交修改前，请确认 `main` 分支可以在不检出
+《仙剑奇侠传》商业数据的情况下完成构建和基本启动测试。
 
 ## 开发环境
 
@@ -25,10 +25,19 @@ git submodule update --init --recursive
 
 ## 商业资源隔离
 
-- 不要提交原版或 Steam 版的 MKF、AVI、`word.dat`、`m.msg`、存档和 NAND 镜像。
-- 不要提交由商业 AVI 转码得到的视频；它们仍是商业数据的派生文件。
+- 不要把原版或 Steam 版的 MKF、AVI、`word.dat`、`m.msg`、存档和 NAND 镜像提交
+  到 `main`、PR 分支或 issue 附件。
+- 私有 `release` 分支只能保存经仓库所有者授权的单个
+  `release-assets/PAL-ORIGINAL.PAK`，必须由 Git LFS 跟踪，且永远不能合并到
+  `main`。
+- 设备用 `PAL9588.PAK` 和单独转码视频仍是商业数据的派生文件，只能位于被忽略的
+  `build/`、私有测试 NAND 或用户设备中。
 - 构建产物、工具链和测试日志也不进入版本库。
-- 提交前运行 `git status --short`，并检查暂存区中不存在上述文件。
+- 提交前运行 `git status --short` 和 `git diff --cached --stat`，确认暂存区中不存在
+  上述文件；维护 `release` 分支时则只允许一个 LFS pointer 资源文件。
+
+仓库从私有改为公开前，必须先删除远端 `release` 分支并确认商业 LFS 对象不再能从
+公开仓库访问。
 
 ## 代码与 submodule
 

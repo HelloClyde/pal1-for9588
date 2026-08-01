@@ -1,6 +1,7 @@
 #include "bda_filesystem.h"
 #include "bda_memory.h"
 #include "bda_time.h"
+#include "pal_config.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -16,6 +17,11 @@
 #include <sys/time.h>
 
 #define ALLOCATION_MAGIC 0x9588a110u
+#define PALPAK_PATH PAL_9588_DATA_PATH "PAL9588.PAK"
+#define PALPAK_HEADER_SIZE 32u
+#define PALPAK_ENTRY_SIZE 64u
+#define PALPAK_MAX_ENTRIES 256u
+#define PAL9588_FILE_SLOTS 32u
 
 typedef union allocation_header {
     struct {
@@ -30,18 +36,51 @@ struct pal9588_file {
     int error;
     int eof;
     int standard;
+    int packed;
+    uint32_t packed_base;
+    uint32_t packed_size;
+    uint32_t packed_position;
 };
 
 int errno;
 
-static FILE g_stdin = {0, 0, 1, 1};
-static FILE g_stdout = {0, 0, 0, 1};
-static FILE g_stderr = {0, 0, 0, 1};
+static FILE g_stdin = {0, 0, 1, 1, 0, 0, 0, 0};
+static FILE g_stdout = {0, 0, 0, 1, 0, 0, 0, 0};
+static FILE g_stderr = {0, 0, 0, 1, 0, 0, 0, 0};
+static FILE g_file_slots[PAL9588_FILE_SLOTS];
+static uint8_t g_file_slot_used[PAL9588_FILE_SLOTS];
 FILE *stdin = &g_stdin;
 FILE *stdout = &g_stdout;
 FILE *stderr = &g_stderr;
 
 static uint32_t g_random_state = 1u;
+static int g_palpak_last_error;
+static int g_palpak_handle;
+
+int pal9588_pak_last_error(void) { return g_palpak_last_error; }
+
+static FILE *pal9588_file_allocate(void)
+{
+    uint32_t index;
+    for (index = 0u; index < PAL9588_FILE_SLOTS; ++index) {
+        if (!g_file_slot_used[index]) {
+            g_file_slot_used[index] = 1u;
+            return &g_file_slots[index];
+        }
+    }
+    return 0;
+}
+
+static void pal9588_file_release(FILE *stream)
+{
+    uint32_t index;
+    for (index = 0u; index < PAL9588_FILE_SLOTS; ++index) {
+        if (stream == &g_file_slots[index]) {
+            g_file_slot_used[index] = 0u;
+            return;
+        }
+    }
+}
 
 void *malloc(size_t size)
 {
@@ -598,20 +637,193 @@ int getchar(void) { return EOF; }
 int putchar(int character) { return character; }
 int puts(const char *text) { return (int)strlen(text) + 1; }
 
+static uint32_t palpak_read_u32(const uint8_t *value)
+{
+    return (uint32_t)value[0] |
+           ((uint32_t)value[1] << 8) |
+           ((uint32_t)value[2] << 16) |
+           ((uint32_t)value[3] << 24);
+}
+
+static int palpak_ascii_equal(char left, char right)
+{
+    if (left >= 'A' && left <= 'Z') left = (char)(left + ('a' - 'A'));
+    if (right >= 'A' && right <= 'Z') right = (char)(right + ('a' - 'A'));
+    return left == right;
+}
+
+static const char *palpak_basename(const char *path)
+{
+    const char *base = path;
+    while (*path) {
+        if (*path == '\\' || *path == '/') base = path + 1;
+        ++path;
+    }
+    return base;
+}
+
+static int palpak_name_matches(const uint8_t *stored, const char *requested)
+{
+    uint32_t index;
+    for (index = 0; index < 48u; ++index) {
+        char left = (char)stored[index];
+        char right = requested[index];
+        if (left == 0 || right == 0) return left == right;
+        if (!palpak_ascii_equal(left, right)) return 0;
+    }
+    return 0;
+}
+
+static int palpak_read_only_mode(const char *mode)
+{
+    const char *cursor;
+    if (!mode || mode[0] != 'r') return 0;
+    for (cursor = mode; *cursor; ++cursor) {
+        if (*cursor == '+') return 0;
+    }
+    return 1;
+}
+
+static int palpak_open(
+    const char *path, int *handle_out, uint32_t *base_out,
+    uint32_t *size_out
+)
+{
+    uint8_t header[PALPAK_HEADER_SIZE];
+    uint8_t entry[PALPAK_ENTRY_SIZE];
+    const uint8_t magic[8] = {'P', 'A', 'L', '9', '5', '8', '8', 0};
+    const char *name;
+    uint32_t version;
+    uint32_t count;
+    uint32_t directory_offset;
+    uint32_t entry_size;
+    uint32_t data_offset;
+    uint32_t archive_size;
+    uint32_t index;
+    int handle;
+    int physical_size;
+
+    g_palpak_last_error = 1;
+    if (!path) return 0;
+    name = palpak_basename(path);
+    if (!*name) return 0;
+
+    handle = g_palpak_handle;
+    if (!bda_fs_file_is_valid(handle)) {
+        handle = bda_fs_fopen_raw(PALPAK_PATH, "rb");
+        if (!bda_fs_file_is_valid(handle)) {
+            g_palpak_last_error = 2;
+            return 0;
+        }
+        g_palpak_handle = handle;
+    }
+    if (bda_fs_seek_raw(handle, 0, BDA_SEEK_SET) < 0) {
+        g_palpak_last_error = 3;
+        (void)bda_fs_close_raw(handle);
+        g_palpak_handle = 0;
+        return 0;
+    }
+    if (bda_fs_fread_raw(header, 1u, sizeof(header), handle) !=
+        (int)sizeof(header) || memcmp(header, magic, sizeof(magic)) != 0) {
+        g_palpak_last_error = 3;
+        (void)bda_fs_close_raw(handle);
+        g_palpak_handle = 0;
+        return 0;
+    }
+
+    version = palpak_read_u32(header + 8);
+    count = palpak_read_u32(header + 12);
+    directory_offset = palpak_read_u32(header + 16);
+    entry_size = palpak_read_u32(header + 20);
+    data_offset = palpak_read_u32(header + 24);
+    archive_size = palpak_read_u32(header + 28);
+    physical_size = bda_fs_seek_raw(handle, 0, BDA_SEEK_END);
+    if (version != 1u || count == 0u || count > PALPAK_MAX_ENTRIES ||
+        directory_offset != PALPAK_HEADER_SIZE ||
+        entry_size != PALPAK_ENTRY_SIZE ||
+        data_offset != ((PALPAK_HEADER_SIZE + count * PALPAK_ENTRY_SIZE +
+                        15u) & ~15u) ||
+        physical_size < 0 || archive_size != (uint32_t)physical_size) {
+        g_palpak_last_error = 4;
+        (void)bda_fs_close_raw(handle);
+        g_palpak_handle = 0;
+        return 0;
+    }
+
+    for (index = 0; index < count; ++index) {
+        uint32_t offset;
+        uint32_t size;
+        uint32_t flags;
+        if (bda_fs_seek_raw(
+                handle,
+                (int32_t)(directory_offset + index * PALPAK_ENTRY_SIZE),
+                BDA_SEEK_SET
+            ) < 0 ||
+            bda_fs_fread_raw(entry, 1u, sizeof(entry), handle) !=
+                (int)sizeof(entry)) {
+            g_palpak_last_error = 5;
+            (void)bda_fs_close_raw(handle);
+            g_palpak_handle = 0;
+            return 0;
+        }
+        if (!palpak_name_matches(entry, name)) continue;
+        offset = palpak_read_u32(entry + 48);
+        size = palpak_read_u32(entry + 52);
+        flags = palpak_read_u32(entry + 60);
+        if (flags != 0u || offset < data_offset || (offset & 15u) != 0u ||
+            size > archive_size || offset > archive_size - size ||
+            bda_fs_seek_raw(handle, (int32_t)offset, BDA_SEEK_SET) < 0) {
+            g_palpak_last_error = 6;
+            (void)bda_fs_close_raw(handle);
+            g_palpak_handle = 0;
+            return 0;
+        }
+        *handle_out = handle;
+        *base_out = offset;
+        *size_out = size;
+        g_palpak_last_error = 0;
+        return 1;
+    }
+
+    g_palpak_last_error = 7;
+    return 0;
+}
+
 FILE *fopen(const char *path, const char *mode)
 {
-    int handle = bda_fs_fopen_raw(path, mode);
+    int handle = 0;
+    uint32_t packed_base = 0u;
+    uint32_t packed_size = 0u;
+    int packed = 0;
+    int read_only = palpak_read_only_mode(mode);
     FILE *stream;
-    if (!bda_fs_file_is_valid(handle)) return 0;
-    stream = (FILE *)malloc(sizeof(*stream));
+
+    /*
+     * The 9588 filesystem invalidates an existing file handle after some
+     * failed opens.  Search the package before probing optional loose files
+     * so the shared archive handle remains usable throughout startup.
+     */
+    if (read_only &&
+        palpak_open(path, &handle, &packed_base, &packed_size)) {
+        packed = 1;
+    } else {
+        handle = bda_fs_fopen_raw(path, mode);
+        if (!bda_fs_file_is_valid(handle)) return 0;
+    }
+    stream = pal9588_file_allocate();
     if (!stream) {
-        (void)bda_fs_close_raw(handle);
+        g_palpak_last_error = 8;
+        if (!packed) (void)bda_fs_close_raw(handle);
         return 0;
     }
     stream->handle = handle;
     stream->error = 0;
     stream->eof = 0;
     stream->standard = 0;
+    stream->packed = packed;
+    stream->packed_base = packed_base;
+    stream->packed_size = packed_size;
+    stream->packed_position = 0u;
     return stream;
 }
 
@@ -619,16 +831,37 @@ int fclose(FILE *stream)
 {
     int result;
     if (!stream || stream->standard) return EOF;
-    result = bda_fs_close_raw(stream->handle);
-    free(stream);
+    result = stream->packed ? 0 : bda_fs_close_raw(stream->handle);
+    pal9588_file_release(stream);
     return result;
 }
 
 size_t fread(void *buffer, size_t size, size_t count, FILE *stream)
 {
     int result;
+    size_t requested = count;
     if (!stream || stream->standard || size > 0xffffffffu ||
         count > 0xffffffffu) return 0u;
+    if (stream->packed) {
+        uint32_t remaining;
+        size_t available;
+        if (size == 0u || count == 0u) return 0u;
+        remaining = stream->packed_size - stream->packed_position;
+        available = remaining / size;
+        if (count > available) count = available;
+        if (count == 0u) {
+            stream->eof = 1;
+            return 0u;
+        }
+        if (bda_fs_seek_raw(
+                stream->handle,
+                (int32_t)(stream->packed_base + stream->packed_position),
+                BDA_SEEK_SET
+            ) < 0) {
+            stream->error = 1;
+            return 0u;
+        }
+    }
     result = bda_fs_fread_raw(
         buffer, (bda_size_t)size, (bda_size_t)count, stream->handle
     );
@@ -636,7 +869,10 @@ size_t fread(void *buffer, size_t size, size_t count, FILE *stream)
         stream->error = 1;
         return 0u;
     }
-    if ((size_t)result < count) stream->eof = 1;
+    if (stream->packed) {
+        stream->packed_position += (uint32_t)((size_t)result * size);
+    }
+    if ((size_t)result < requested) stream->eof = 1;
     return (size_t)result;
 }
 
@@ -647,6 +883,10 @@ size_t fwrite(
     int result;
     if (!stream || stream->standard || size > 0xffffffffu ||
         count > 0xffffffffu) return 0u;
+    if (stream->packed) {
+        stream->error = 1;
+        return 0u;
+    }
     result = bda_fs_fwrite_raw(
         buffer, (bda_size_t)size, (bda_size_t)count, stream->handle
     );
@@ -674,6 +914,26 @@ int fseek(FILE *stream, long offset, int origin)
 {
     int result;
     if (!stream || stream->standard) return -1;
+    if (stream->packed) {
+        int64_t target;
+        if (origin == SEEK_SET) {
+            target = (int64_t)offset;
+        } else if (origin == SEEK_CUR) {
+            target = (int64_t)stream->packed_position + offset;
+        } else if (origin == SEEK_END) {
+            target = (int64_t)stream->packed_size + offset;
+        } else {
+            stream->error = 1;
+            return -1;
+        }
+        if (target < 0 || target > (int64_t)stream->packed_size) {
+            stream->error = 1;
+            return -1;
+        }
+        stream->packed_position = (uint32_t)target;
+        stream->eof = 0;
+        return 0;
+    }
     result = bda_fs_seek_raw(stream->handle, (int32_t)offset, origin);
     if (result < 0) {
         stream->error = 1;
@@ -687,6 +947,7 @@ long ftell(FILE *stream)
 {
     int result;
     if (!stream || stream->standard) return -1;
+    if (stream->packed) return (long)stream->packed_position;
     result = bda_fs_tell_raw(stream->handle);
     if (result < 0) stream->error = 1;
     return (long)result;
@@ -695,7 +956,8 @@ long ftell(FILE *stream)
 int ferror(FILE *stream)
 {
     if (!stream || stream->standard) return 0;
-    return stream->error || bda_fs_error(stream->handle) != 0;
+    return stream->error ||
+           (!stream->packed && bda_fs_error(stream->handle) != 0);
 }
 
 int feof(FILE *stream) { return stream ? stream->eof : 0; }
@@ -739,7 +1001,10 @@ char *fgets(char *buffer, int size, FILE *stream)
 int access(const char *path, int mode)
 {
     int file;
+    uint32_t packed_base;
+    uint32_t packed_size;
     (void)mode;
+    if (palpak_open(path, &file, &packed_base, &packed_size)) return 0;
     file = bda_fs_fopen_raw(path, "rb");
     if (!bda_fs_file_is_valid(file)) return -1;
     (void)bda_fs_close_raw(file);

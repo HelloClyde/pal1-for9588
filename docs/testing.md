@@ -38,6 +38,29 @@ NAND。程序成功启动，模拟器没有产生崩溃快照，并捕获到完�
 固件路径使用 GBK byte string 后，资源探测、商标、片头、标题画面和新游戏
 首场剧情均成功运行，画面方向已校正，模拟器没有崩溃快照。
 
+## 单资源包回归
+
+主机端先用 `tools/palpak.py` 对当前 `PAL9588.PAK` 的 27 个目录项逐项验证 CRC32，
+随后以 `-ResetImage` 重建隔离 NAND，并通过导入脚本确认
+`/应用/数据/PAL` 中只写入一个 `PAL9588.PAK`：
+
+```powershell
+python -S -m unittest discover -s tests -v
+python -S .\tools\palpak.py verify .\build\PAL9588.PAK
+.\tools\test-with-resources.ps1 .\build\PAL9588.PAK -ResetImage
+```
+
+设备包大小为 51623200 bytes，测试样本 SHA-256 为
+`2CB184B45339003E5BD112082C820AD51A8F60BC71A72CABCCBBB8F9874584AE`。
+BDA 的 `access()` 能发现包内虚拟文件，SDLPAL 随后交错打开并随机读取多个 MKF 和
+AVI。模拟器实际越过资源检查，显示 288×180 启动 AVI；状态页同时记录约
+32–34 MIPS、视频帧持续更新和 `play 22050 Hz`，证明图像与音频都来自同一包。
+同一 NAND 随后用 `PORTTEST.BATTLE` 跑到 `BATTLE WON`，证明多个长期打开的虚拟
+MKF 句柄可交错读取到战斗结算。
+
+包工具测试还覆盖大小写归一化、打包/列表/完整校验/展开往返，以及单字节破坏后的
+CRC32 拒绝。散文件兼容路径保留，仅用于故障定位。
+
 ## PAL98 AVI 过场
 
 Steam `PAL98` 的六段原始 AVI 合计 188809584 bytes（180.06 MiB）。运行：
@@ -131,8 +154,9 @@ BATTLE WON
 - `PORTTEST.VIDEO`：跳过启动用 1、2 号片段，完整顺序播放 3–6 号；
 - `PORTTEST.LOG`：测试过程和结果日志；存档测试另用 `PORTTEST.EXPECT` 保存预期值。
 
-这些标记仅供隔离 NAND/真机测试使用，普通玩家不要创建；测试结束应删除标记，商业
-资源始终不进入仓库。
+这些标记仅供隔离 NAND/真机测试使用，普通玩家不要创建；测试结束应删除标记。商业
+资源不进入 `main` 或测试日志；仓库所有者的原版备份仅存在于受限的私有 `release`
+分支。
 
 ## 音乐与音效
 

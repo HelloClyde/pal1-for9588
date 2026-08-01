@@ -21,7 +21,11 @@ $python = Join-Path $emulator 'python\python.exe'
 $nand = Join-Path $emulator 'runtime\bda_test\bbk9588_nand.bin'
 $baseUrl = "http://127.0.0.1:$Port"
 
-& (Join-Path $PSScriptRoot 'check-resources.ps1') $source
+if (Test-Path -LiteralPath $source -PathType Container) {
+    & (Join-Path $PSScriptRoot 'check-resources.ps1') $source
+} elseif ($VideoPath) {
+    throw '-VideoPath 只能与传统资源目录一起使用；PAL9588.PAK 已包含视频。'
+}
 
 $deployParameters = @{
     EmulatorRoot = $emulator

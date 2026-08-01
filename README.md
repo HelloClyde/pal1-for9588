@@ -1,131 +1,151 @@
 # SDLPAL for BBK 9588
 
-把开源的 SDLPAL 引擎移植到步步高 9588（JZ4740/MIPS32）学习机。项目是独立
-Git 仓库，SDK 和 SDLPAL 都以固定提交的 submodule 引入，方便复现和后续开源。
+把开源 SDLPAL 原生移植到步步高 9588（JZ4740/MIPS32）学习机。SDK 和
+SDLPAL 都以固定提交的 submodule 引入；发布产物是固件直接执行的 BDA，模拟器只用于
+开发和回归测试。
+
+![PAL1 for BBK 9588 实机画面预览](docs/images/preview-collage.png)
+
+上图来自同一份 BDA 在 bbk9588-emulator v0.1.5 中实际运行的 AVI、标题和战斗帧，
+仅裁掉模拟器外框后拼接。
+
+## 快速开始
+
+以下流程适用于有该私有仓库和私有 `release` 分支访问权的开发者。需要 Git、Git
+LFS、PowerShell、Python 3.10+、FFmpeg，以及默认位于
+`E:\bbk9588-emulator-v0.1.5` 的模拟器。
+
+```powershell
+git lfs install
+git clone --recurse-submodules git@github.com:HelloClyde/pal1-for9588.git
+cd pal1-for9588
+
+# 从私有 release 分支取一个原版资源包，离线转码并生成设备包
+.\tools\prepare-9588-resources.ps1
+
+# 构建原生 MIPS BDA，并把 BDA + 单资源包放入隔离 NAND 启动
+.\tools\build.ps1
+.\tools\test-with-resources.ps1 .\build\PAL9588.PAK -ResetImage
+```
+
+输出文件：
+
+- `build\Pal1-9588.bda`：9588 原生程序；
+- `build\PAL9588.PAK`：设备端唯一需要的只读游戏资源包。
+
+真机安装时，将 BDA 放到 `A:\应用\程序\`，将 `PAL9588.PAK` 放到
+`A:\应用\数据\PAL\`。存档、配置和诊断日志仍以普通可写文件保存在后一个目录。
 
 ## 当前状态
 
-- 320×200、8 位调色板画面以原始比例居中显示，并顺时针旋转到 240×320 屏幕；
-  模拟器横屏显示方向已用商标画面校验。
-- 实体方向键按横屏方向映射；`Enter` 为确认/搜索，`Esc` 为菜单/取消。
-- 已接入 SDK 的窗口、事件、文件、计时、内存和 RGB565 图像接口。
-- 完整 SDLPAL 游戏核心参与构建。
-- 已接入 22050 Hz、16-bit、单声道 PCM：RIX/OPL 背景音乐及 DOS VOC、Win95
-  WAV 音效由 SDLPAL 解码、混音后送入 SDK 队列；低算力配置使用 DBOPL 和
-  2048-sample 缓冲。
-- 已接入原生 AVI 过场：设备端使用 SDLPAL 的开源 Microsoft Video 1 解码器，
-  直接把 RGB555 帧旋转提交到 9588，PCM 音轨转换后进入同一音频队列；文件缺失时
-  仍自动使用原版 RNG 过场。
-- 模拟器已完成存档写入、重新启动后读回、单敌人战斗胜利，以及 1–6 号 AVI
-  逐帧播放回归；这些测试入口由 `PORTTEST.*` 标记显式启用，不影响正常启动。
+- 完整 SDLPAL 游戏、地图、脚本、UI、战斗和存档核心参与构建。
+- 320×200、8 位调色板画面以原始比例居中显示，并旋转到 240×320 屏幕。
+- 已接入 22050 Hz、16-bit、单声道 PCM：RIX/OPL 音乐和 DOS VOC/Win95 WAV
+  音效由 SDLPAL 解码、混音后送入 SDK 队列。
+- 已接入 SDLPAL 开源 Microsoft Video 1 解码器；六段 PAL98 AVI 在电脑端保留原始
+  288×180 分辨率离线转码，设备端直接播放视频和 PCM 音轨。
+- BDA 可从单个 `PAL9588.PAK` 随机读取全部 MKF、文本、字体和 AVI，不会先把包展开
+  到 NAND。
+- 模拟器已验证单包启动、AVI 与音频播放、存档重启读回、自动战斗胜利和六段视频
+  回归。真机性能、按键手感、扬声器表现及完整剧情仍需实体 9588 复测。
 
-## 取得源码
+## 资源工作流
 
-```powershell
-git clone --recurse-submodules https://github.com/HelloClyde/pal1-for9588.git
-cd pal1-for9588
-git submodule update --init --recursive
-```
+### 私有原版包
 
-两个 submodule 都必须停在仓库记录的提交。不要直接使用 SDLPAL 最新主线：本移植以
-仍包含 Dingux/JZ4740 支持的最后一个历史版本为兼容基线。
-
-## 游戏资源
-
-本仓库不提供《仙剑奇侠传》的商业数据。请只使用自己合法拥有的 DOS 或 Windows 95
-版资源，并复制到模拟器/真机的：
+`main` 和正常开发分支不包含商业资源。用户合法购买的原版数据只保存在同一私有
+GitHub 仓库的 `release` 分支中：
 
 ```text
-A:\应用\数据\PAL\
+release-assets/PAL-ORIGINAL.PAK
 ```
 
-最低需要：
+该文件由 Git LFS 管理，是 DOS 版游戏数据和 PAL98 六段原始 AVI 合成的一个包。
+`release` 分支不得合并进 `main`，仓库改为公开前必须先删除该分支和对应 LFS 对象；
+资源版权不因存入私有仓库而改变。
 
-```text
-abc.mkf  ball.mkf  data.mkf  f.mkf    fbp.mkf  fire.mkf
-gop.mkf  map.mkf   mgo.mkf   mus.mkf  pat.mkf  rgm.mkf
-rng.mkf  sss.mkf   word.dat
-```
-
-音效还需要 `voc.mkf` 或 `sounds.mkf`；DOS 版通常需要 `m.msg`。存档也写入
-`A:\应用\数据\PAL\`。资源不会被复制进 Git 工作区。
-
-Steam 经典版的 `PAL98` 目录还包含 `1.AVI` 至 `6.AVI`。原文件合计约
-180 MiB，可在电脑上用 FFmpeg 离线转换成适合 9588 的低码率版本：
+若没有 `release` 分支访问权，可以直接从自己安装的 Steam 经典版创建本地原版包：
 
 ```powershell
-.\tools\transcode-avi.ps1 <PAL98目录> .\build\pal98-compact
+.\tools\pack-original-resources.ps1 `
+    -DosPath 'D:\Program Files (x86)\Steam\steamapps\common\PAL\PAL_DOS' `
+    -Pal98Path 'D:\Program Files (x86)\Steam\steamapps\common\PAL\PAL98'
+
+.\tools\prepare-9588-resources.ps1 `
+    -OriginalPack .\build\PAL-ORIGINAL.PAK
 ```
 
-默认保留原始 288×180 分辨率，输出 12 fps、MS Video 1 和 11025 Hz 单声道 PCM，
-六段实测合计 23.32 MiB，减少约 87.05%。转换结果仍是标准 AVI，但头部会被规范成
-SDLPAL 小型解析器可接受的形式；工具还会把 RIFF 奇数长度流块的既有 padding 计入
-块长度，规避旧顺序读取器不跳过 padding 的限制，文件总大小不变。它们属于由用户
-自有商业资源产生的派生数据，不应提交或分发；真机使用时把六个文件复制到同一
-`PAL` 数据目录即可。
+所有 staging 目录和资源输出都位于被 Git 忽略的 `build\` 下。
 
-可先在电脑上检查一个资源目录：
+### 设备单包
+
+`prepare-9588-resources.ps1` 会执行以下操作：
+
+1. 从私有 `release` 分支通过 Git LFS 取得 `PAL-ORIGINAL.PAK`，或使用
+   `-OriginalPack` 指定本地包；
+2. 校验原版资源，使用 FFmpeg 将 1–6 号 AVI 转为 288×180、12 fps、MS Video 1、
+   11025 Hz、8-bit mono PCM；
+3. 把核心资源与转码视频打成一个 `build\PAL9588.PAK` 并逐项校验 CRC32。
+
+当前测试包包含 27 个条目（含新游戏初始模板 `0.RPG`），大小约 49.2 MiB。PAK
+采用未压缩、16-byte 对齐的目录格式，换取低内存和真正的随机读取；BDA 的
+`access`/`fopen`/`fread`/`fseek`/`ftell`
+会把包内条目作为普通只读文件暴露给未修改的 SDLPAL。包内文件优先于同名散文件，
+写入始终落到普通 NAND 文件。格式见 [docs/palpak-format.md](docs/palpak-format.md)。
+
+可单独使用打包工具：
 
 ```powershell
-.\tools\check-resources.ps1 D:\Games\PAL
+python -S .\tools\palpak.py list .\build\PAL9588.PAK
+python -S .\tools\palpak.py verify .\build\PAL9588.PAK
+python -S .\tools\palpak.py extract .\build\PAL9588.PAK .\build\unpacked
 ```
 
 ## 构建
 
-需要 PowerShell、Python 3.10+。首次构建会使用 SDK 自带脚本安装并校验 MIPS
-工具链：
+首次构建会使用 SDK 脚本安装并校验 MIPS 工具链：
 
 ```powershell
 .\tools\build.ps1
 ```
 
-如果已有工具链，可设置：
+已有工具链时可设置：
 
 ```powershell
-$env:BDA_TOOLCHAIN_PREFIX = "C:\toolchains\mips\bin\mipsel-none-elf-"
+$env:BDA_TOOLCHAIN_PREFIX = 'C:\toolchains\mips\bin\mipsel-none-elf-'
 .\tools\build.ps1 -SkipToolchainSetup
 ```
 
-输出为 `build\Pal1-9588.bda`，并同时生成 ELF、map 和反汇编文件。
+输出同时包含 BDA、ELF、map 和反汇编文件。两个 submodule 必须停在仓库记录的提交；
+不要直接改用 SDLPAL 最新主线。
 
 ## 模拟器测试
 
-默认寻找 `E:\bbk9588-emulator-v0.1.5`，使用 SDK 的隔离测试 NAND，不修改原始
-镜像：
+只有 BDA、没有游戏资源的启动冒烟测试：
 
 ```powershell
 .\tools\test-emulator.ps1 -ResetImage
 ```
 
-未放游戏资源时，程序会显示资源缺失诊断页；这也是无需分发商业数据的启动冒烟测试。
+使用推荐的单包测试：
 
-需要验证实际游戏流程时，可在模拟器网页的文件管理器中创建 `/应用/数据/PAL` 目录，再导入经
-`tools/check-resources.ps1` 检查通过的自有游戏文件。仓库不提供也不接受这些商业资源。
+```powershell
+.\tools\test-with-resources.ps1 .\build\PAL9588.PAK -ResetImage
+```
 
-也可以直接把合法资源导入隔离 NAND 并启动：
+脚本仍兼容传统散文件目录，便于诊断和资源比对：
 
 ```powershell
 .\tools\test-with-resources.ps1 D:\Games\PAL -ResetImage
 ```
 
-同时测试离线转码视频：
-
-```powershell
-.\tools\test-with-resources.ps1 D:\Games\PAL `
-    -VideoPath .\build\pal98-compact -ResetImage
-```
-
-更详细的移植结构和实测记录见 [docs/porting.md](docs/porting.md) 与
+更详细的结构和实测记录见 [docs/porting.md](docs/porting.md) 与
 [docs/testing.md](docs/testing.md)。
-
-生成的 BDA 是 9588 固件直接加载的 MIPS 原生程序；模拟器仅用于自动化验证，
-不是发布依赖。模拟器已覆盖存档重启读回、代表性战斗和六段 AVI 完整解码；真机
-性能、按键手感、扬声器表现及完整剧情仍需在实体 9588 上复测。
 
 ## 许可证与来源
 
-移植代码采用 GPL-3.0-or-later。SDLPAL 的完整许可见
-`third_party/sdlpal/gpl.txt`，SDK 许可见 `sdk/LICENSE`。商业游戏数据不属于本项目。
+移植代码采用 GPL-3.0-or-later。SDLPAL 完整许可见
+`third_party/sdlpal/gpl.txt`，SDK 许可见 `sdk/LICENSE`。商业游戏资源不属于本项目
+许可证，只能由拥有合法副本且获准访问私有仓库的人使用。
 
-参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，尤其是商业资源隔离与
-submodule 固定版本要求。
+参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。

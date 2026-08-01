@@ -24,9 +24,17 @@ submodule; no proprietary player binary from the original device is copied.
 
 ## PAL game data
 
-No original game data is distributed. Users must supply legally obtained
-files themselves.
+PAL game data is proprietary and is not covered by this repository's GPL
+license. The normal source history and `main` branch contain no original or
+converted game data.
 
-The optional `tools/transcode-avi.ps1` invokes a user-installed FFmpeg executable
-as an offline tool. FFmpeg is not bundled. Converted movies remain derived from
-the user's legally obtained PAL data and are excluded from the repository.
+For the owner's private development workflow only, the private `release`
+branch stores one Git-LFS-managed `release-assets/PAL-ORIGINAL.PAK` assembled
+from a legally purchased Steam copy. That branch must not be merged into
+`main`, shared with unauthorized users, or retained if the repository is made
+public. Other users must supply their own legally obtained files.
+
+The resource preparation scripts invoke a user-installed FFmpeg executable as
+an offline tool. FFmpeg is not bundled. `PAL9588.PAK` and converted movies
+remain derived from the user's legally obtained PAL data and are excluded from
+the source branches.
