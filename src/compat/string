@@ -1,0 +1,121 @@
+#ifndef PAL9588_MINI_STD_STRING_H
+#define PAL9588_MINI_STD_STRING_H
+
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+
+namespace std {
+
+class string {
+public:
+    string() : data_(empty_data()), size_(0), capacity_(0) {}
+
+    string(const char *text) : data_(empty_data()), size_(0), capacity_(0)
+    {
+        if (text) append(text, strlen(text));
+    }
+
+    string(const string &other) : data_(empty_data()), size_(0), capacity_(0)
+    {
+        append(other.data_, other.size_);
+    }
+
+    string(string &&other) noexcept
+        : data_(other.data_), size_(other.size_), capacity_(other.capacity_)
+    {
+        other.data_ = empty_data();
+        other.size_ = 0;
+        other.capacity_ = 0;
+    }
+
+    ~string()
+    {
+        if (capacity_ != 0) free(data_);
+    }
+
+    string &operator=(const string &other)
+    {
+        if (this != &other) {
+            clear();
+            append(other.data_, other.size_);
+        }
+        return *this;
+    }
+
+    string &operator=(string &&other) noexcept
+    {
+        if (this != &other) {
+            if (capacity_ != 0) free(data_);
+            data_ = other.data_;
+            size_ = other.size_;
+            capacity_ = other.capacity_;
+            other.data_ = empty_data();
+            other.size_ = 0;
+            other.capacity_ = 0;
+        }
+        return *this;
+    }
+
+    const char *c_str() const { return data_; }
+    size_t size() const { return size_; }
+    size_t length() const { return size_; }
+    bool empty() const { return size_ == 0; }
+
+    string substr(size_t position, size_t count) const
+    {
+        string result;
+        if (position >= size_) return result;
+        if (count > size_ - position) count = size_ - position;
+        result.append(data_ + position, count);
+        return result;
+    }
+
+    string &append(const char *text, size_t length)
+    {
+        size_t required = size_ + length;
+        if (!reserve(required)) return *this;
+        if (length != 0) memcpy(data_ + size_, text, length);
+        size_ = required;
+        data_[size_] = '\0';
+        return *this;
+    }
+
+    void clear()
+    {
+        size_ = 0;
+        data_[0] = '\0';
+    }
+
+private:
+    static char *empty_data()
+    {
+        static char empty = '\0';
+        return &empty;
+    }
+
+    bool reserve(size_t requested)
+    {
+        char *replacement;
+        size_t capacity;
+        if (requested <= capacity_) return true;
+        capacity = capacity_ == 0 ? 32 : capacity_;
+        while (capacity < requested) capacity *= 2;
+        replacement = (char *)malloc(capacity + 1);
+        if (!replacement) return false;
+        if (size_ != 0) memcpy(replacement, data_, size_);
+        replacement[size_] = '\0';
+        if (capacity_ != 0) free(data_);
+        data_ = replacement;
+        capacity_ = capacity;
+        return true;
+    }
+
+    char *data_;
+    size_t size_;
+    size_t capacity_;
+};
+
+}
+
+#endif

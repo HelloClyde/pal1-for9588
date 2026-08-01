@@ -1,0 +1,6 @@
+[submodule "sdk"]
+	path = sdk
+	url = https://github.com/HelloClyde/bbk9588-bda-sdk.git
+[submodule "third_party/sdlpal"]
+	path = third_party/sdlpal
+	url = https://github.com/sdlpal/sdlpal.git

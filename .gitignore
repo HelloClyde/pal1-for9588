@@ -1,0 +1,18 @@
+/build/
+/.toolchain/
+*.log
+*.rpg
+/game/
+
+# Proprietary PAL data and emulator images must stay outside the repository.
+/PAL/
+/pal-data/
+/game-data/
+/resources/
+/nand/
+/*.mkf
+/*.avi
+/word.dat
+/m.msg
+/*.sav
+/*.img

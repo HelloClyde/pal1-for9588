@@ -1,0 +1,23 @@
+#ifndef PAL9588_MINI_CSTRING_H
+#define PAL9588_MINI_CSTRING_H
+
+#include <string.h>
+
+namespace std {
+using ::memchr;
+using ::memcmp;
+using ::memcpy;
+using ::memmove;
+using ::memset;
+using ::strcat;
+using ::strchr;
+using ::strcmp;
+using ::strcpy;
+using ::strlen;
+using ::strncmp;
+using ::strncpy;
+using ::strrchr;
+using ::strstr;
+}
+
+#endif
