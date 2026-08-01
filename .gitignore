@@ -1,5 +1,6 @@
 /build/
 /.toolchain/
+__pycache__/
 *.log
 *.rpg
 /game/
@@ -10,6 +11,7 @@
 /game-data/
 /resources/
 /nand/
+/release-assets/
 /*.mkf
 /*.avi
 /word.dat

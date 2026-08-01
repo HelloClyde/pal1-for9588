@@ -45,27 +45,42 @@ def main() -> int:
     source = args.source.resolve()
     emulator_root = args.emulator_root.resolve()
     nand = args.nand.resolve()
-    if not source.is_dir():
-        raise SystemExit(f"Resource directory does not exist: {source}")
+    if not source.exists():
+        raise SystemExit(f"Resource source does not exist: {source}")
     if not nand.is_file():
         raise SystemExit(f"Test NAND does not exist: {nand}")
 
-    files = {
-        item.name.lower(): item
-        for item in source.iterdir()
-        if item.is_file()
-    }
-    missing = sorted(REQUIRED - files.keys())
-    if missing:
-        raise SystemExit("Missing required files: " + ", ".join(missing))
-    if "voc.mkf" not in files and "sounds.mkf" not in files:
-        raise SystemExit("Missing sound effects: voc.mkf or sounds.mkf is required")
+    if source.is_file():
+        if args.video_source is not None:
+            raise SystemExit("--video-source cannot be used with PAL9588.PAK")
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from palpak import PalPakError, verify_archive
+        try:
+            verify_archive(source)
+        except PalPakError as exc:
+            raise SystemExit(f"Invalid PAL9588.PAK: {exc}") from exc
+        selected = {"PAL9588.PAK": source}
+    elif source.is_dir():
+        files = {
+            item.name.lower(): item
+            for item in source.iterdir()
+            if item.is_file()
+        }
+        missing = sorted(REQUIRED - files.keys())
+        if missing:
+            raise SystemExit("Missing required files: " + ", ".join(missing))
+        if "voc.mkf" not in files and "sounds.mkf" not in files:
+            raise SystemExit(
+                "Missing sound effects: voc.mkf or sounds.mkf is required"
+            )
+        selected = {
+            name: files[name]
+            for name in sorted((REQUIRED | OPTIONAL | VIDEO) & files.keys())
+        }
+    else:
+        raise SystemExit(f"Unsupported resource source: {source}")
 
-    selected = {
-        name: files[name]
-        for name in sorted((REQUIRED | OPTIONAL | VIDEO) & files.keys())
-    }
-    if args.video_source is not None:
+    if source.is_dir() and args.video_source is not None:
         video_source = args.video_source.resolve()
         if not video_source.is_dir():
             raise SystemExit(f"Video directory does not exist: {video_source}")
