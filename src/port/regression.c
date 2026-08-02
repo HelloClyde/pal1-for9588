@@ -12,6 +12,9 @@
 
 #define SAVE_EXPECT_MAGIC 0x31545350u
 
+#define BATTLE_TEST_FIELD 2u
+#define BATTLE_TEST_MUSIC 37u
+
 typedef struct pal9588_save_expect
 {
     DWORD magic;
@@ -170,7 +173,15 @@ static void run_battle_regression(void)
 
     reset_log("BATTLE START");
     gpGlobals->fInMainGame = TRUE;
-    PAL_InitGameData(1);
+    /*
+     * Use a deterministic new-game state instead of depending on a loose
+     * 1.rpg save.  The default state intentionally leaves the battlefield at
+     * FBP chunk 0, which is the player-status background rather than a battle
+     * scene; normal gameplay sets both values through scripts before combat.
+     */
+    PAL_InitGameData(0);
+    gpGlobals->wNumBattleField = BATTLE_TEST_FIELD;
+    gpGlobals->wNumBattleMusic = BATTLE_TEST_MUSIC;
     PAL_SetPalette(gpGlobals->wNumPalette, gpGlobals->fNightPalette);
     PAL_SetLoadFlags(kLoadScene | kLoadPlayerSprite);
     PAL_LoadResources();
