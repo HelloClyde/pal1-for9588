@@ -1,6 +1,6 @@
 # 测试记录
 
-测试日期：2026-08-01
+测试日期：2026-08-02
 
 ## 构建与静态检查
 
@@ -22,8 +22,24 @@ NAND。程序成功启动，模拟器没有产生崩溃快照，并捕获到完�
 - NAND 路径及资源文件探测；
 - 窗口创建和事件轮询；
 - 8 位调色板到 RGB565 的转换；
-- 320×240 到 240×320 的旋转与画面提交；
+- 320×240 到 240×320 的旋转与 direct framebuffer 整帧提交；
+- 固件布局不匹配或提交失败时保留 picture renderer 回退分支；
 - `Esc` 退出路径。
+
+## Direct framebuffer 回归
+
+SDK submodule 更新到 `ac4558a` 后，使用带 QEMU GDB 诊断的完整 NAND 启动当前
+单资源包。运行时 `g_direct_framebuffer=1`，SDK 返回的 uncached 扫描缓冲为
+`0xa1f82000`，描述符为 240×320、stride 480、`rotate_180=1`。修正直接模式不应
+依赖旧 `g_draw`/`g_draw_object` 的提交前置条件后，模拟器 frame chardev 持续收到
+新帧；普通 `/screen.png` 与同一时刻直接读取扫描缓冲生成的 PNG 哈希一致，间隔
+两秒采集的帧哈希不同。
+
+用 `Esc` 跳过片头后实际进入游戏场景，320×240 画面在设备逆时针转 90° 的持机
+方向下正向显示。状态页同时记录 PCM `playing=true`、`muted=false`、22050 Hz、
+transport dropped packet 为 0，且没有崩溃快照。最终 BDA 大小为 2416848 bytes，
+SHA-256 为
+`F37E372F515D6528DDCD9EBCC2DF631FB41BE5C4D589D500FA63E94D44E9D148`。
 
 ## 合法 Steam DOS 资源测试
 
@@ -50,8 +66,8 @@ python -S .\tools\palpak.py verify .\build\PAL9588.PAK
 .\tools\test-with-resources.ps1 .\build\PAL9588.PAK -ResetImage
 ```
 
-设备包大小为 51623200 bytes，测试样本 SHA-256 为
-`2CB184B45339003E5BD112082C820AD51A8F60BC71A72CABCCBBB8F9874584AE`。
+当前设备包大小为 60302656 bytes，SHA-256 为
+`DE55B272D6E71AFBE7591C46F1AA020CEFD320328051EC5F210BE6808B878A0B`。
 BDA 的 `access()` 能发现包内虚拟文件，SDLPAL 随后交错打开并随机读取多个 MKF 和
 AVI。模拟器实际越过资源检查，显示 288×180 启动 AVI；状态页同时记录约
 32–34 MIPS、视频帧持续更新和 `play 22050 Hz`，证明图像与音频都来自同一包。
