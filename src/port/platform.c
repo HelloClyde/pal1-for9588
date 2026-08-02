@@ -16,6 +16,8 @@
 #define LOGICAL_HEIGHT 240
 #define PHYSICAL_WIDTH 240
 #define PHYSICAL_HEIGHT 320
+#define EXIT_SHORTCUT_HOLD_MS 1500u
+#define EXIT_SHORTCUT_KEYS ((1u << 4) | (1u << 5))
 
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
@@ -25,6 +27,9 @@ static int g_detached;
 static int g_timer_started;
 static unsigned g_sampled_keys;
 static unsigned g_latched_keys;
+static Uint32 g_exit_shortcut_started;
+static int g_exit_shortcut_active;
+static int g_close_requested;
 static uint16_t *g_pixels;
 static bda_gui_framebuffer_t g_framebuffer;
 static int g_direct_framebuffer;
@@ -55,9 +60,26 @@ static unsigned read_input_keys(void)
     return keys;
 }
 
+static void update_close_shortcut(unsigned keys)
+{
+    if ((keys & EXIT_SHORTCUT_KEYS) == EXIT_SHORTCUT_KEYS) {
+        Uint32 now = pal9588_platform_ticks();
+        if (!g_exit_shortcut_active) {
+            g_exit_shortcut_started = now;
+            g_exit_shortcut_active = 1;
+        } else if ((Uint32)(now - g_exit_shortcut_started) >=
+                   EXIT_SHORTCUT_HOLD_MS) {
+            g_close_requested = 1;
+        }
+    } else {
+        g_exit_shortcut_active = 0;
+    }
+}
+
 static void sample_input_keys(void)
 {
     unsigned keys = read_input_keys();
+    update_close_shortcut(keys);
     g_latched_keys |= keys & ~g_sampled_keys;
     g_sampled_keys = keys;
 }
@@ -126,6 +148,9 @@ int pal9588_platform_open(void)
     g_draw_object = 0;
     g_sampled_keys = 0;
     g_latched_keys = 0;
+    g_exit_shortcut_started = 0;
+    g_exit_shortcut_active = 0;
+    g_close_requested = 0;
     g_pixels = (uint16_t *)malloc(
         PHYSICAL_WIDTH * PHYSICAL_HEIGHT * sizeof(*g_pixels)
     );
@@ -177,7 +202,7 @@ void pal9588_platform_close(void)
         memset(&message, 0, sizeof(message));
         (void)bda_gui_frame_stop(g_frame);
         (void)bda_gui_frame_release(g_frame);
-        while (!g_detached && pumps++ < 32u &&
+        while (!g_detached && pumps++ < 128u &&
                bda_gui_event_pump_frame_once(&message, g_frame)) {
             bda_sys_delay(1u);
         }
@@ -310,7 +335,15 @@ void pal9588_platform_pump(void)
 {
     bda_gui_message_t message;
     unsigned count = 0;
-    if (!g_frame) return;
+    /*
+     * Direct framebuffer games poll the six-byte physical-key packet and do
+     * not need the slow window queue while running.  Do not consume that
+     * queue here; pal9588_platform_close() pumps it after frame_stop/release
+     * so the firmware can still deliver DRAW_CONTEXT_DETACH.  If the direct
+     * path fails, submit_physical_pixels() clears the flag and the fallback
+     * picture renderer resumes the normal window pump automatically.
+     */
+    if (!g_frame || g_direct_framebuffer) return;
     memset(&message, 0, sizeof(message));
     while (count++ < 8u &&
            bda_gui_event_pump_frame_once(&message, g_frame)) {}
@@ -328,16 +361,23 @@ unsigned pal9588_platform_keys(void)
 void pal9588_platform_wait_action_release(void)
 {
     const unsigned action_keys = (1u << 4) | (1u << 5);
-    while (!g_detached && (read_input_keys() & action_keys) != 0u) {
+    unsigned keys = read_input_keys();
+    while (!g_detached && (keys & action_keys) != 0u) {
+        update_close_shortcut(keys);
+        if (g_close_requested) break;
         SDL_9588AudioPump();
         pal9588_platform_pump();
         bda_sys_delay(1u);
+        keys = read_input_keys();
     }
-    g_sampled_keys = read_input_keys();
+    g_sampled_keys = keys;
     g_latched_keys = 0;
 }
 
-int pal9588_platform_detached(void) { return g_detached; }
+int pal9588_platform_detached(void)
+{
+    return g_detached || g_close_requested;
+}
 
 Uint32 pal9588_platform_ticks(void)
 {

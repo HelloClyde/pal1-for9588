@@ -20,11 +20,11 @@ NAND。程序成功启动，模拟器没有产生崩溃快照，并捕获到完�
 
 - BDA 加载、入口和运行时初始化；
 - NAND 路径及资源文件探测；
-- 窗口创建和事件轮询；
+- 窗口创建、直接按键轮询和关闭阶段事件处理；
 - 8 位调色板到 RGB565 的转换；
 - 320×240 到 240×320 的旋转与 direct framebuffer 整帧提交；
 - 固件布局不匹配或提交失败时保留 picture renderer 回退分支；
-- `Esc` 退出路径。
+- Enter + Esc 长按安全退出路径。
 
 ## Direct framebuffer 回归
 
@@ -37,9 +37,30 @@ SDK submodule 更新到 `ac4558a` 后，使用带 QEMU GDB 诊断的完整 NAND 
 
 用 `Esc` 跳过片头后实际进入游戏场景，320×240 画面在设备逆时针转 90° 的持机
 方向下正向显示。状态页同时记录 PCM `playing=true`、`muted=false`、22050 Hz、
-transport dropped packet 为 0，且没有崩溃快照。最终 BDA 大小为 2416848 bytes，
+transport dropped packet 为 0，且没有崩溃快照。最终 BDA 大小为 2417632 bytes，
 SHA-256 为
-`F37E372F515D6528DDCD9EBCC2DF631FB41BE5C4D589D500FA63E94D44E9D148`。
+`5659F227E183AB460508EDC99B3EF752A7ACD539D8C205EB614A956ADB75B500`。
+
+## 运行期窗口消息泵优化
+
+direct framebuffer 模式的实体键本来已经通过 SDK input packet 直接读取，但旧版
+仍在每次 `SDL_PollEvent()` 以及 `SDL_Delay()` 的约 1 ms 循环内最多泵 8 条窗口
+消息。优化版在游戏运行期完全跳过窗口队列；picture renderer 回退路径仍正常泵送，
+关闭时则在 `frame_stop -> frame_release` 之后最多处理 128 条消息等待 detach。
+
+在同一完整 NAND、同一启动 AVI 和同样 20 秒采样窗口内，以 QEMU frame chardev
+计数比较：
+
+| 版本 | 帧数 | 时间 | 实测 FPS |
+| --- | ---: | ---: | ---: |
+| 运行期窗口消息泵 | 103 | 20.095 s | 5.126 |
+| direct input、无运行期消息泵 | 232 | 20.062 s | 11.564 |
+
+优化后为原来的 2.256 倍，达到 12 FPS 源视频帧率的 96.4%。两次测试都保持
+22050 Hz PCM 播放，transport dropped packet 为 0，且没有崩溃快照。模拟器还验证
+了同时长按 Enter + Esc 1.5 秒会走 SDL quit、停止并释放 frame，随后正常返回系统
+启动器；窗口消息只在这一关闭阶段恢复。该结果用于比较软件路径开销，不等同于真机
+最终 FPS，仍需实体 9588 复测。
 
 ## 合法 Steam DOS 资源测试
 

@@ -44,6 +44,8 @@ cd pal1-for9588
   逆时针转 90° 横持，画面顺时针写入 240×320 竖屏帧缓冲。
 - 每帧通过 SDK 验证的 direct framebuffer API 一次复制到 LCD 扫描缓冲；
   SDK 拒绝当前固件布局或提交失败时，自动回退到原有 picture 渲染路径。
+- direct framebuffer 模式下实体键直接读取 SDK input packet，运行期不再进入慢速
+  窗口消息队列；同时长按 Enter + Esc 1.5 秒可安全退出并在关闭阶段处理 detach。
 - 已接入 22050 Hz、16-bit、单声道 PCM：RIX/OPL 音乐和 DOS VOC/Win95 WAV
   音效由 SDLPAL 解码、混音后送入 SDK 队列。
 - 已接入 SDLPAL 开源 Microsoft Video 1 解码器；六段 PAL98 AVI 在电脑端由质量可控

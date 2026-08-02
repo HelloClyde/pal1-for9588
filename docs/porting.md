@@ -45,6 +45,13 @@ RGB555 帧缩放到 320×200、上下留黑边并旋转成 RGB565。视频帧一
 | Enter | 确认 |
 | Esc | 菜单 / 取消 |
 
+实体键来自 SDK `GUI+0x5d4` 的 6-byte input packet，不依赖窗口按键消息。启用
+direct framebuffer 后，`SDL_PollEvent` 和 `SDL_Delay` 的运行期热路径不再调用
+`bda_gui_event_pump_frame_once()`；只有 direct path 失败并回退 picture renderer，
+或者执行 `frame_stop -> frame_release` 关闭序列时才恢复窗口消息泵。这样仍能在退出时
+接收 `DRAW_CONTEXT_DETACH`，但不会让慢速窗口队列限制每帧速度。同时长按
+Enter + Esc 1.5 秒会产生 SDL quit，作为不依赖窗口消息的原生安全退出手势。
+
 游戏资源、存档和配置统一位于 `A:\应用\数据\PAL\`。固件文件 API 接收
 ASCII/GBK byte string，代码中的中文目录显式写为 GBK 转义字节，不依赖源文件编码。
 
@@ -60,7 +67,7 @@ ASCII/GBK byte string，代码中的中文目录显式写为 GBK 转义字节，
 设备固定为 SDK 已验证的 22050 Hz、signed 16-bit、mono；启动时显式设为全幅并在
 退出时恢复原固件衰减值。SDLPAL 的 RIX
 播放器使用实测更适合本目标的新版 DOSBox DBOPL 核合成音乐，VOC/WAV 音效经过
-重采样后与音乐混音。PCM 使用 2048-sample（约 92.9 ms）缓冲，由事件轮询、
+重采样后与音乐混音。PCM 使用 2048-sample（约 92.9 ms）缓冲，由按键轮询、
 整帧提交前后和延时函数共同泵入固件队列，退出时调用公开的
 `bda_audio_stop()`。模拟器的片头重解压阶段仍可能产生短暂欠载，真机表现待测。
 
