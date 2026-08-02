@@ -6,8 +6,9 @@ SDLPAL 都以固定提交的 submodule 引入；发布产物是固件直接执�
 
 ![PAL1 for BBK 9588 实机画面预览](docs/images/preview-collage.png)
 
-上图来自同一份 BDA 在 bbk9588-emulator v0.1.5 中实际运行的 AVI、标题和战斗帧，
-仅裁掉模拟器外框后拼接。
+上图来自同一份 BDA 在 bbk9588-emulator v0.1.5 中实际运行的六个场景：AVI
+过场、标题菜单、两段剧情对话、自由行动地图和战斗。画面按正常横屏方向校正，
+仅裁掉模拟器外框、等比缩放后拼接，没有重绘游戏内容。
 
 ## 快速开始
 
