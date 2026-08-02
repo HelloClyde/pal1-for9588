@@ -40,11 +40,13 @@ cd pal1-for9588
 ## 当前状态
 
 - 完整 SDLPAL 游戏、地图、脚本、UI、战斗和存档核心参与构建。
-- 320×200、8 位调色板画面以原始比例居中显示，并旋转到 240×320 屏幕。
+- 320×200、8 位调色板画面以原始比例居中显示，并逆时针旋转 90° 到
+  240×320 屏幕。
 - 已接入 22050 Hz、16-bit、单声道 PCM：RIX/OPL 音乐和 DOS VOC/Win95 WAV
   音效由 SDLPAL 解码、混音后送入 SDK 队列。
-- 已接入 SDLPAL 开源 Microsoft Video 1 解码器；六段 PAL98 AVI 在电脑端保留原始
-  288×180 分辨率离线转码，设备端直接播放视频和 PCM 音轨。
+- 已接入 SDLPAL 开源 Microsoft Video 1 解码器；六段 PAL98 AVI 在电脑端由质量可控
+  的 4×4 块编码器保留原始 288×180 分辨率离线转码，设备端直接播放视频和 PCM
+  音轨，不承担 H.264/MPEG-4 软解负担。
 - BDA 可从单个 `PAL9588.PAK` 随机读取全部 MKF、文本、字体和 AVI，不会先把包展开
   到 NAND。
 - 模拟器已验证单包启动、AVI 与音频播放、存档重启读回、自动战斗胜利和六段视频
@@ -84,11 +86,11 @@ release-assets/PAL-ORIGINAL.PAK
 
 1. 从私有 `release` 分支通过 Git LFS 取得 `PAL-ORIGINAL.PAK`，或使用
    `-OriginalPack` 指定本地包；
-2. 校验原版资源，使用 FFmpeg 将 1–6 号 AVI 转为 288×180、12 fps、MS Video 1、
-   11025 Hz、8-bit mono PCM；
+2. 校验原版资源，使用 FFmpeg 解出 RGB555 帧和 PCM，再由本仓库的高质量 MS Video 1
+   块编码器将 1–6 号 AVI 转为 288×180、12 fps、11025 Hz、8-bit mono PCM；
 3. 把核心资源与转码视频打成一个 `build\PAL9588.PAK` 并逐项校验 CRC32。
 
-当前测试包包含 27 个条目（含新游戏初始模板 `0.RPG`），大小约 49.2 MiB。PAK
+当前测试包包含 27 个条目（含新游戏初始模板 `0.RPG`），大小约 57.5 MiB。PAK
 采用未压缩、16-byte 对齐的目录格式，换取低内存和真正的随机读取；BDA 的
 `access`/`fopen`/`fread`/`fseek`/`ftell`
 会把包内条目作为普通只读文件暴露给未修改的 SDLPAL。包内文件优先于同名散文件，

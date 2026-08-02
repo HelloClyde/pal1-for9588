@@ -10,8 +10,10 @@ param(
     [int]$Height = 180,
     [ValidateRange(5, 15)]
     [int]$Fps = 12,
-    [ValidateRange(1, 31)]
-    [int]$VideoQuality = 8,
+    [ValidateRange(0, 64)]
+    [int]$QualityError = 14,
+    [ValidateRange(0, 64)]
+    [int]$SkipError = 7,
     [ValidateSet(11025, 22050)]
     [int]$AudioRate = 11025,
     [switch]$Force
@@ -36,6 +38,7 @@ $ffmpeg = (Get-Command ffmpeg -ErrorAction Stop).Source
 $ffprobe = (Get-Command ffprobe -ErrorAction Stop).Source
 $python = (Get-Command python -ErrorAction Stop).Source
 $normalizer = Join-Path $PSScriptRoot 'prepare-pal-avi.py'
+$encoder = Join-Path $PSScriptRoot 'encode-msvideo1.py'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $inputs = @{}
@@ -60,13 +63,11 @@ foreach ($number in 1..6) {
     }
 
     try {
-        & $ffmpeg -hide_banner -loglevel error -y `
-            -i $inputs[$name] -map '0:v:0' -map '0:a:0?' `
-            -vf "scale=$Width`:$Height`:flags=bilinear,fps=$Fps" `
-            -c:v msvideo1 -q:v $VideoQuality -pix_fmt rgb555le `
-            -c:a pcm_u8 -ar $AudioRate -ac 1 -map_metadata -1 `
-            $temporary
-        if ($LASTEXITCODE -ne 0) { throw "FFmpeg 转码失败：$name" }
+        & $python -s $encoder $inputs[$name] $temporary `
+            --width $Width --height $Height --fps $Fps `
+            --audio-rate $AudioRate --quality-error $QualityError `
+            --skip-error $SkipError
+        if ($LASTEXITCODE -ne 0) { throw "MS Video 1 高质量转码失败：$name" }
 
         & $python -s $normalizer $temporary
         if ($LASTEXITCODE -ne 0) { throw "AVI 兼容性处理失败：$name" }
@@ -78,10 +79,15 @@ foreach ($number in 1..6) {
         if ($LASTEXITCODE -ne 0 -or
             $probeText -notmatch 'codec_name=msvideo1' -or
             $probeText -notmatch 'codec_name=pcm_u8' -or
+            $probeText -notmatch "width=$Width" -or
+            $probeText -notmatch "height=$Height" -or
+            $probeText -notmatch "r_frame_rate=$Fps/1" -or
             $probeText -notmatch "sample_rate=$AudioRate" -or
             $probeText -notmatch 'channels=1') {
             throw "AVI 校验失败：$name"
         }
+        & $ffmpeg -hide_banner -loglevel error -i $temporary -f null NUL
+        if ($LASTEXITCODE -ne 0) { throw "AVI 完整解码校验失败：$name" }
         Move-Item -LiteralPath $temporary -Destination $destination -Force
         $file = Get-Item -LiteralPath $destination
         $results += [PSCustomObject]@{

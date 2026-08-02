@@ -233,8 +233,8 @@ void pal9588_platform_present(const SDL_Surface *surface)
         const uint8_t *source =
             (const uint8_t *)surface->pixels + y * surface->pitch;
         for (x = 0; x < LOGICAL_WIDTH; ++x) {
-            int physical_x = LOGICAL_HEIGHT - 1 - y;
-            int physical_y = x;
+            int physical_x = y;
+            int physical_y = LOGICAL_WIDTH - 1 - x;
             uint8_t index = source[x];
             g_pixels[physical_y * PHYSICAL_WIDTH + physical_x] =
                 rgb565(surface->format->palette->colors[index]);
@@ -265,10 +265,10 @@ void pal9588_platform_present_rgb555(
         int source_y = y * height / target_height;
         const Uint16 *source = pixels + source_y * pitch_pixels;
         int logical_y = target_y + y;
-        int physical_x = LOGICAL_HEIGHT - 1 - logical_y;
+        int physical_x = logical_y;
         for (x = 0; x < target_width; ++x) {
             int source_x = x * width / target_width;
-            int physical_y = x;
+            int physical_y = LOGICAL_WIDTH - 1 - x;
             g_pixels[physical_y * PHYSICAL_WIDTH + physical_x] =
                 rgb555_to_rgb565(source[source_x]);
         }

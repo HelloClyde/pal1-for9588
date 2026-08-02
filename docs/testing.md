@@ -71,13 +71,18 @@ Steam `PAL98` 的六段原始 AVI 合计 188809584 bytes（180.06 MiB）。运�
     -VideoPath .\build\pal98-compact -ResetImage
 ```
 
-当前默认 profile 保留原始分辨率，六段文件合计 24454440 bytes（23.32 MiB），缩小
-87.05%。工具逐个确认 MS Video 1、288×180、12 fps、11025 Hz、8-bit mono PCM，并把 FFmpeg 写入
-的 PCM stream handler 和 1 MiB suggested buffer 规范为原 PAL95 小型读取器使用的
-形式。回归中发现 SDLPAL 的旧顺序读取器不会跳过 RIFF 奇数长度块后的一个 padding
-byte；准备工具现把既有 padding 计入流块和 `idx1` 长度，不增加文件大小。修正后六个
-`movi` 区域分别包含 206、736、414、160、1835、1757 个视频帧，且不再有奇数长度
-音视频块，FFprobe 仍能读出原时长和帧数。
+当前默认 profile 保留原始分辨率，六段文件合计 33133898 bytes（31.60 MiB），缩小
+82.45%。FFmpeg 解出 12 fps RGB555 帧和 11025 Hz、8-bit mono PCM；
+`tools/encode-msvideo1.py` 再以默认 quality error 14、skip error 7 选择 MS Video 1
+的跳过、单色、双色和分区八色块。与旧 FFmpeg 重编码器的 23.32 MiB 输出相比增加
+8.28 MiB，但片头抽样 SSIM 从 0.929 提升到 0.941，地球纹理与 SOFTSTAR 字样边缘
+明显更接近原片。设备端解码代码和复杂度不变。
+
+工具逐个确认 MS Video 1、288×180、12 fps、11025 Hz、8-bit mono PCM，并完整解码
+每个输出。六个 `movi` 区域分别包含 206、736、414、160、1835、1757 个视频帧；
+所有流块均为偶数长度，最大 suggested buffer 为 24544 bytes，低于播放器的 64 KiB
+上限，容器不依赖 `idx1`。音频交错器把不能整除帧率的单个样本顺延到下一组，避免
+为每组补齐造成累计时长漂移。
 
 正常玩家路径实际显示了 `1.avi` 和 `2.avi`。对两段分别长按 `Esc` 后松手，第一段只
 跳到第二段，第二段返回后稳定停留在“新的故事 / 旧的回忆”标题菜单，没有把同一次
@@ -100,10 +105,20 @@ VIDEO PASS
 0。另一次人工跳过回归在 3、5、6 号分别显示 216、127、158 帧后退出，4 号自然播放
 完整 160 帧；长按跳过 3 号不会继续跳过刚开始的 4 号。
 
-改为默认 288×180 profile 后，模拟器实际显示了正常启动用的 1 号片段，并对 3–6
-号分别解码送显 157、72、90、87 帧后跳过；四段均返回 `PASS`，累计音频传输 4548
-packet，dropped packet 为 0，且无崩溃快照。分辨率提高没有改变容器帧数或 RIFF
-兼容性处理。
+高质量 288×180 profile 在单包路径实际显示了正常启动用的 1 号片段。标记回归对
+3–6 号分别解码送显 151、28、27、27 帧后退出，设备端日志为：
+
+```text
+VIDEO START
+VIDEO 3 FRAMES 151 KEYS 1 PASS
+VIDEO 4 FRAMES 28 KEYS 1 PASS
+VIDEO 5 FRAMES 27 KEYS 1 PASS
+VIDEO 6 FRAMES 27 KEYS 1 PASS
+VIDEO PASS
+```
+
+四段均无崩溃，PCM transport dropped packet 为 0。回归后已删除测试标记和日志，
+并用模拟器自带工具重建测试 NAND 的页外 ECC 后重新校验 `PAL9588.PAK` 完整。
 
 此前从模拟器 PCM WebSocket 抽取开场 120 个 packet、105884 个 sample：48.85%
 sample 非零，peak 1993，RMS 474.84，确认 AVI 音轨已进入设备 PCM，而不是只发送
@@ -112,9 +127,9 @@ sample 非零，peak 1993，RMS 474.84，确认 AVI 音轨已进入设备 PCM，
 QEMU 本次约为 32–33 M guest instructions/s，解码和 RGB555 缩放会使 AVI 的墙钟
 播放时间明显慢于标称时长；该现象只用于发现热点，不作为 9588 真机帧率结论。
 
-六个转码容器现已通过静态格式检查；低存储 profile 完成了模拟器完整帧数回归，
-当前默认原分辨率 profile 完成了六段实际解码抽测。结局剧情的脚本触发条件和实体机
-音画同步仍需在真机完整流程中复测。
+六个转码容器现已通过静态格式和完整解码检查；当前默认原分辨率 profile 完成了
+六段实际解码抽测。结局剧情的脚本触发条件和实体机音画同步仍需在真机完整流程中
+复测。
 
 ## 存档重启读回
 

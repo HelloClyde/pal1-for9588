@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define AUDIO_READY_POLL_LIMIT 1000000u
+
 static char g_error[96];
 static SDL_VideoInfo g_video_info;
 static SDL_Surface *g_video_surface;
@@ -18,6 +20,8 @@ static Uint8 *g_audio_buffer;
 static int g_audio_opened;
 static int g_audio_paused;
 static unsigned g_audio_lock_count;
+static int g_audio_original_attenuation;
+static int g_audio_attenuation_saved;
 
 struct SDL_mutex {
     int unused;
@@ -32,8 +36,8 @@ static void audio_pump(void)
     }
     /*
      * Keep the firmware queue full.  Rendering a rotated 320x200 frame can
-     * take much longer than one 1024-byte (about 23 ms) PCM block on 9588,
-     * so limiting a pump to one or two blocks causes audible gaps.
+     * approach one 4096-byte (about 93 ms) PCM block on 9588, so limiting a
+     * pump to one or two blocks causes audible gaps.
      */
     while (blocks++ < 32u && bda_audio_ready()) {
         int written;
@@ -561,11 +565,17 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
         return -1;
     }
     memset(g_audio_buffer, 0, g_audio_spec.size);
+    g_audio_original_attenuation = bda_audio_get_attenuation();
+    g_audio_attenuation_saved =
+        g_audio_original_attenuation >= 0 &&
+        g_audio_original_attenuation <=
+            (int)BDA_AUDIO_ATTENUATION_NEAR_SILENT;
     bda_audio_open_pcm(
         BDA_AUDIO_SAMPLE_RATE_22050,
         BDA_AUDIO_BITS_16,
         BDA_AUDIO_CHANNELS_MONO
     );
+    bda_audio_set_attenuation(BDA_AUDIO_ATTENUATION_FULL_SCALE);
     g_audio_opened = 1;
     g_audio_paused = 1;
     g_audio_lock_count = 0;
@@ -574,13 +584,26 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
 }
 void SDL_CloseAudio(void)
 {
+    unsigned polls = 0;
     if (!g_audio_opened) return;
     g_audio_paused = 1;
+    if (g_audio_attenuation_saved &&
+        g_audio_original_attenuation !=
+            (int)BDA_AUDIO_ATTENUATION_FULL_SCALE) {
+        while (!bda_audio_ready() && polls++ < AUDIO_READY_POLL_LIMIT) {}
+        if (polls < AUDIO_READY_POLL_LIMIT) {
+            memset(g_audio_buffer, 0, g_audio_spec.size);
+            bda_audio_set_attenuation((u32)g_audio_original_attenuation);
+            (void)bda_audio_write(g_audio_buffer, g_audio_spec.size);
+        }
+    }
     bda_audio_stop();
     free(g_audio_buffer);
     g_audio_buffer = 0;
     memset(&g_audio_spec, 0, sizeof(g_audio_spec));
     g_audio_lock_count = 0;
+    g_audio_original_attenuation = 0;
+    g_audio_attenuation_saved = 0;
     g_audio_opened = 0;
 }
 void SDL_PauseAudio(int pause_on)
