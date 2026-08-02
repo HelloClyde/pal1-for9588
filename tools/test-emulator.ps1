@@ -13,7 +13,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bda = Join-Path $repoRoot 'build\Pal1-9588.bda'
+$bdaName = [string]::Concat([char]0x4ED9, [char]0x5251, '1.bda')
+$bda = Join-Path $repoRoot (Join-Path 'build' $bdaName)
 $helper = Join-Path $repoRoot 'sdk\scripts\test_bda_in_emulator.ps1'
 
 if (-not (Test-Path -LiteralPath $bda -PathType Leaf)) {

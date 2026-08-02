@@ -10,6 +10,8 @@ def main() -> None:
     parser.add_argument("raw", type=Path)
     parser.add_argument("--sdk", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--title", required=True)
+    parser.add_argument("--icon", required=True, type=Path)
     args = parser.parse_args()
 
     sys.path.insert(0, str(args.sdk.resolve()))
@@ -29,7 +31,7 @@ def main() -> None:
 
     code = args.raw.read_bytes()
     data = bytearray(b"\0" * ENTRY_OFFSET)
-    icons = build_icons(None, (0, 0, 0))
+    icons = build_icons(args.icon, (0, 0, 0))
     data[ICON_START:ENTRY_OFFSET] = icons
     data.extend(code)
     data.extend(b"\0" * (-len(data) & 3))
@@ -44,7 +46,7 @@ def main() -> None:
         icon2_size=ICON_SIZES[2],
         icon3_size=ICON_SIZES[3],
     )
-    write_header(data, fields, "PAL1 9588")
+    write_header(data, fields, args.title)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(data)
 

@@ -191,8 +191,14 @@ $elf = Join-Path $buildRoot 'Pal1-9588.elf'
 $raw = Join-Path $buildRoot 'Pal1-9588.bin'
 $map = Join-Path $buildRoot 'Pal1-9588.map'
 $dump = Join-Path $buildRoot 'Pal1-9588.dump.txt'
-$bda = Join-Path $buildRoot 'Pal1-9588.bda'
+$appTitle = [string]::Concat([char]0x4ED9, [char]0x5251, '1')
+$bda = Join-Path $buildRoot ($appTitle + '.bda')
+$icon = Join-Path $repoRoot 'assets\pal1-icon.png'
 $linker = Join-Path $repoRoot 'linker\bda.ld'
+
+if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) {
+    throw "缺少 BDA 图标：$icon"
+}
 
 $linkArguments = @(
     '-EL', '-march=mips32', '-msoft-float',
@@ -211,7 +217,9 @@ Invoke-Checked $python @(
     (Join-Path $PSScriptRoot 'pack-prelinked.py'),
     $raw,
     '--sdk', $sdkRoot,
-    '--output', $bda
+    '--output', $bda,
+    '--title', $appTitle,
+    '--icon', $icon
 )
 
 Write-Host "ELF: $elf"

@@ -126,7 +126,8 @@ int pal9588_platform_open(void)
     g_picture.source_pixels = g_pixels;
     g_picture.selected_index = -1;
 
-    descriptor.title = "PAL1 9588";
+    /* The BBK GUI expects legacy GBK text here: "仙剑1". */
+    descriptor.title = "\xCF\xC9\xBD\xA3\x31";
     descriptor.wndproc = window_proc;
     descriptor.height = LOGICAL_HEIGHT;
     descriptor.width = LOGICAL_WIDTH;
