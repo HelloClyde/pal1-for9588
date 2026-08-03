@@ -8,7 +8,8 @@ param(
         'E:\bbk9588-emulator-v0.1.5'
     }),
     [int]$Port = 8013,
-    [string]$VideoPath,
+    [Alias('VideoPath')]
+    [string]$VideoPackage,
     [switch]$ResetImage,
     [switch]$NoOpenBrowser
 )
@@ -23,8 +24,6 @@ $baseUrl = "http://127.0.0.1:$Port"
 
 if (Test-Path -LiteralPath $source -PathType Container) {
     & (Join-Path $PSScriptRoot 'check-resources.ps1') $source
-} elseif ($VideoPath) {
-    throw '-VideoPath 只能与传统资源目录一起使用；PAL9588.PAK 已包含视频。'
 }
 
 $deployParameters = @{
@@ -58,9 +57,19 @@ $importArguments = @(
     '-s', (Join-Path $PSScriptRoot 'import-resources-emulator.py'),
     $source, '--emulator-root', $emulator, '--nand', $nand
 )
-if ($VideoPath) {
-    $video = (Resolve-Path -LiteralPath $VideoPath).Path
-    $importArguments += @('--video-source', $video)
+if ($VideoPackage) {
+    $video = (Resolve-Path -LiteralPath $VideoPackage).Path
+    if (Test-Path -LiteralPath $source -PathType Container) {
+        if (-not (Test-Path -LiteralPath $video -PathType Container)) {
+            throw '传统资源目录需要用视频目录，而不是 PALVIDEO.PAK。'
+        }
+        $importArguments += @('--video-source', $video)
+    } else {
+        if (-not (Test-Path -LiteralPath $video -PathType Leaf)) {
+            throw 'PAL9588.PAK 需要搭配 PALVIDEO.PAK 文件。'
+        }
+        $importArguments += @('--video-package', $video)
+    }
 }
 & $python @importArguments
 if ($LASTEXITCODE -ne 0) { throw '资源导入失败' }

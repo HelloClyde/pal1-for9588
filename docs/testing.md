@@ -1,6 +1,6 @@
 # 测试记录
 
-测试日期：2026-08-02
+测试日期：2026-08-02；资源拆包回归更新：2026-08-03
 
 ## 构建与静态检查
 
@@ -28,8 +28,8 @@ NAND。程序成功启动，模拟器没有产生崩溃快照，并捕获到完�
 
 ## Direct framebuffer 回归
 
-SDK submodule 更新到 `ac4558a` 后，使用带 QEMU GDB 诊断的完整 NAND 启动当前
-单资源包。运行时 `g_direct_framebuffer=1`，SDK 返回的 uncached 扫描缓冲为
+SDK submodule 更新到 `ac4558a` 后，使用带 QEMU GDB 诊断的完整资源 NAND 启动。
+运行时 `g_direct_framebuffer=1`，SDK 返回的 uncached 扫描缓冲为
 `0xa1f82000`，描述符为 240×320、stride 480、`rotate_180=1`。修正直接模式不应
 依赖旧 `g_draw`/`g_draw_object` 的提交前置条件后，模拟器 frame chardev 持续收到
 新帧；普通 `/screen.png` 与同一时刻直接读取扫描缓冲生成的 PNG 哈希一致，间隔
@@ -75,25 +75,42 @@ direct framebuffer 模式的实体键本来已经通过 SDK input packet 直接�
 固件路径使用 GBK byte string 后，资源探测、商标、片头、标题画面和新游戏
 首场剧情均成功运行，画面方向已校正，模拟器没有崩溃快照。
 
-## 单资源包回归
+## 主包与可选视频包回归
 
-主机端先用 `tools/palpak.py` 对当前 `PAL9588.PAK` 的 27 个目录项逐项验证 CRC32，
-随后以 `-ResetImage` 重建隔离 NAND，并通过导入脚本确认
-`/应用/数据/PAL` 中只写入一个 `PAL9588.PAK`：
+当前设备资源拆成 21 项核心资源的 `PAL9588.PAK`，以及只含 `1.avi`–`6.avi` 的
+可选 `PALVIDEO.PAK`。主机端分别逐项验证 CRC32，导入脚本也拒绝主包混入 AVI、
+视频包缺项或包含额外成员：
 
 ```powershell
 python -S -m unittest discover -s tests -v
 python -S .\tools\palpak.py verify .\build\PAL9588.PAK
+python -S .\tools\palpak.py verify .\build\PALVIDEO.PAK
+.\tools\test-with-resources.ps1 .\build\PAL9588.PAK `
+    -VideoPackage .\build\PALVIDEO.PAK -ResetImage
+```
+
+当前产物为：
+
+| 文件 | 条目 | bytes | SHA-256 |
+| --- | ---: | ---: | --- |
+| `PAL9588.PAK` | 21 | 27168336 | `18AF405D5EE7E0F31148A4BC6733BBA6D2CF141BA1B7F1E2FB49EC52E4DC3E30` |
+| `PALVIDEO.PAK` | 6 | 33134352 | `3BAB5AFA2FDC1DFB2CA1DE3C60A8ECDFE414ED683AC511D034028E50D57E8248` |
+
+BDA 的 `access()`/stdio 层按 `1.avi`–`6.avi` 文件名选择视频包，其他资源选择主包。
+两个包同时部署后，模拟器画面实际显示了 288×180 SOFTSTAR 启动 AVI；采样时收到
+115 个 LCD 帧和 465 个音频 packet，PCM 为 22050 Hz、`playing=true`、
+`muted=false`，transport dropped packet 为 0，且没有崩溃快照。
+
+随后用 `-ResetImage` 重建 NAND，只部署 `PAL9588.PAK`：
+
+```powershell
 .\tools\test-with-resources.ps1 .\build\PAL9588.PAK -ResetImage
 ```
 
-当前设备包大小为 60302656 bytes，SHA-256 为
-`DE55B272D6E71AFBE7591C46F1AA020CEFD320328051EC5F210BE6808B878A0B`。
-BDA 的 `access()` 能发现包内虚拟文件，SDLPAL 随后交错打开并随机读取多个 MKF 和
-AVI。模拟器实际越过资源检查，显示 288×180 启动 AVI；状态页同时记录约
-32–34 MIPS、视频帧持续更新和 `play 22050 Hz`，证明图像与音频都来自同一包。
-同一 NAND 随后用 `PORTTEST.BATTLE` 跑到 `BATTLE WON`，证明多个长期打开的虚拟
-MKF 句柄可交错读取到战斗结算。
+导入结果确认数据目录不存在 `PALVIDEO.PAK`。程序没有因可选包打开失败而破坏主包
+句柄，而是显示 DOS 水墨 RNG 片头；采样时累计 471 个 LCD 帧和 1771 个音频 packet，
+PCM 仍为播放且未静音，dropped packet 为 0，没有崩溃快照。这验证了视频包可以不装
+或单独删除，完整游戏核心仍可启动。
 
 包工具测试还覆盖大小写归一化、打包/列表/完整校验/展开往返，以及单字节破坏后的
 CRC32 拒绝。散文件兼容路径保留，仅用于故障定位。
@@ -142,7 +159,7 @@ VIDEO PASS
 0。另一次人工跳过回归在 3、5、6 号分别显示 216、127、158 帧后退出，4 号自然播放
 完整 160 帧；长按跳过 3 号不会继续跳过刚开始的 4 号。
 
-高质量 288×180 profile 在单包路径实际显示了正常启动用的 1 号片段。标记回归对
+高质量 288×180 profile 在独立视频包路径实际显示了正常启动用的 1 号片段。标记回归对
 3–6 号分别解码送显 151、28、27、27 帧后退出，设备端日志为：
 
 ```text
@@ -155,7 +172,7 @@ VIDEO PASS
 ```
 
 四段均无崩溃，PCM transport dropped packet 为 0。回归后已删除测试标记和日志，
-并用模拟器自带工具重建测试 NAND 的页外 ECC 后重新校验 `PAL9588.PAK` 完整。
+并用模拟器自带工具重建测试 NAND 的页外 ECC 后重新校验两个 PAK 完整。
 
 此前从模拟器 PCM WebSocket 抽取开场 120 个 packet、105884 个 sample：48.85%
 sample 非零，peak 1993，RMS 474.84，确认 AVI 音轨已进入设备 PCM，而不是只发送

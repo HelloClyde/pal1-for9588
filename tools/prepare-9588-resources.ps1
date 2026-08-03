@@ -2,6 +2,7 @@
 param(
     [string]$OriginalPack,
     [string]$Output,
+    [string]$VideoOutput,
     [string]$ReleaseBranch = 'release',
     [string]$Remote = 'origin'
 )
@@ -12,8 +13,17 @@ $buildRoot = Join-Path $repoRoot 'build'
 $unpacked = Join-Path $buildRoot 'pal-original-unpacked'
 $compactVideo = Join-Path $buildRoot 'pal98-compact'
 $ready = Join-Path $buildRoot 'pal9588-ready'
+$videoReady = Join-Path $buildRoot 'pal9588-video-ready'
 if (-not $Output) { $Output = Join-Path $buildRoot 'PAL9588.PAK' }
+if (-not $VideoOutput) { $VideoOutput = Join-Path $buildRoot 'PALVIDEO.PAK' }
 $outputPath = [IO.Path]::GetFullPath($Output)
+$videoOutputPath = [IO.Path]::GetFullPath($VideoOutput)
+if ([string]::Equals(
+        $outputPath, $videoOutputPath,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+    throw '主资源包和视频资源包不能使用同一个输出路径。'
+}
 $python = (Get-Command python -ErrorAction Stop).Source
 $releaseWorktree = $null
 $worktreeAdded = $false
@@ -62,6 +72,7 @@ try {
     Reset-BuildDirectory $unpacked
     Reset-BuildDirectory $compactVideo
     Reset-BuildDirectory $ready
+    Reset-BuildDirectory $videoReady
 
     & $python -S (Join-Path $PSScriptRoot 'palpak.py') `
         extract $originalPath $unpacked
@@ -84,20 +95,34 @@ try {
         if (-not (Test-Path -LiteralPath $video -PathType Leaf)) {
             throw "转换后视频缺失：$video"
         }
-        Copy-Item -LiteralPath $video -Destination (Join-Path $ready "$_.avi")
+        Copy-Item -LiteralPath $video -Destination (
+            Join-Path $videoReady "$_.avi"
+        )
     }
 
     & (Join-Path $PSScriptRoot 'check-resources.ps1') $ready
     & $python -S (Join-Path $PSScriptRoot 'palpak.py') pack $ready $outputPath
-    if ($LASTEXITCODE -ne 0) { throw '9588 资源包创建失败' }
+    if ($LASTEXITCODE -ne 0) { throw '9588 主资源包创建失败' }
     & $python -S (Join-Path $PSScriptRoot 'palpak.py') verify $outputPath
-    if ($LASTEXITCODE -ne 0) { throw '9588 资源包校验失败' }
+    if ($LASTEXITCODE -ne 0) { throw '9588 主资源包校验失败' }
+
+    & $python -S (Join-Path $PSScriptRoot 'palpak.py') `
+        pack $videoReady $videoOutputPath
+    if ($LASTEXITCODE -ne 0) { throw '9588 视频资源包创建失败' }
+    & $python -S (Join-Path $PSScriptRoot 'palpak.py') verify $videoOutputPath
+    if ($LASTEXITCODE -ne 0) { throw '9588 视频资源包校验失败' }
 
     $file = Get-Item -LiteralPath $outputPath
     $hash = Get-FileHash -LiteralPath $outputPath -Algorithm SHA256
-    Write-Host "9588 资源包：$($file.FullName)"
+    Write-Host "9588 主资源包：$($file.FullName)"
     Write-Host "大小：$($file.Length) bytes"
     Write-Host "SHA-256：$($hash.Hash)"
+
+    $videoFile = Get-Item -LiteralPath $videoOutputPath
+    $videoHash = Get-FileHash -LiteralPath $videoOutputPath -Algorithm SHA256
+    Write-Host "9588 可选视频包：$($videoFile.FullName)"
+    Write-Host "大小：$($videoFile.Length) bytes"
+    Write-Host "SHA-256：$($videoHash.Hash)"
 } finally {
     if ($worktreeAdded) {
         & git worktree remove --force $releaseWorktree

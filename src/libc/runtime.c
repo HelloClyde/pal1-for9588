@@ -18,6 +18,7 @@
 
 #define ALLOCATION_MAGIC 0x9588a110u
 #define PALPAK_PATH PAL_9588_DATA_PATH "PAL9588.PAK"
+#define PALVIDEO_PATH PAL_9588_DATA_PATH "PALVIDEO.PAK"
 #define PALPAK_HEADER_SIZE 32u
 #define PALPAK_ENTRY_SIZE 64u
 #define PALPAK_MAX_ENTRIES 256u
@@ -42,6 +43,13 @@ struct pal9588_file {
     uint32_t packed_position;
 };
 
+typedef struct palpak_archive {
+    const char *path;
+    int handle;
+    int optional;
+    int available;
+} palpak_archive_t;
+
 int errno;
 
 static FILE g_stdin = {0, 0, 1, 1, 0, 0, 0, 0};
@@ -55,7 +63,9 @@ FILE *stderr = &g_stderr;
 
 static uint32_t g_random_state = 1u;
 static int g_palpak_last_error;
-static int g_palpak_handle;
+static palpak_archive_t g_palpak_main = {PALPAK_PATH, 0, 0, 1};
+static palpak_archive_t g_palpak_video = {PALVIDEO_PATH, 0, 1, -1};
+static bda_fs_find_data_t g_palpak_find_data;
 
 int pal9588_pak_last_error(void) { return g_palpak_last_error; }
 
@@ -662,6 +672,49 @@ static const char *palpak_basename(const char *path)
     return base;
 }
 
+static int palpak_is_video_name(const char *name)
+{
+    if (!name || name[0] < '1' || name[0] > '6' || name[1] != '.' ||
+        name[5] != 0) {
+        return 0;
+    }
+    return palpak_ascii_equal(name[2], 'a') &&
+           palpak_ascii_equal(name[3], 'v') &&
+           palpak_ascii_equal(name[4], 'i');
+}
+
+static int palpak_path_exists(const char *path)
+{
+    int result;
+    bda_fs_find_data_init(&g_palpak_find_data);
+    result = bda_fs_findfirst(path, 0x27u, &g_palpak_find_data);
+    if (result == -1) return 0;
+    (void)bda_fs_findclose(&g_palpak_find_data);
+    return 1;
+}
+
+static palpak_archive_t *palpak_archive_for_name(const char *name)
+{
+    return palpak_is_video_name(name) ? &g_palpak_video : &g_palpak_main;
+}
+
+static int palpak_archive_available(palpak_archive_t *archive)
+{
+    if (!archive->optional || archive->available >= 0) {
+        return archive->available != 0;
+    }
+    archive->available = palpak_path_exists(archive->path) ? 1 : 0;
+    return archive->available;
+}
+
+static void palpak_archive_close(palpak_archive_t *archive)
+{
+    if (bda_fs_file_is_valid(archive->handle)) {
+        (void)bda_fs_close_raw(archive->handle);
+    }
+    archive->handle = 0;
+}
+
 static int palpak_name_matches(const uint8_t *stored, const char *requested)
 {
     uint32_t index;
@@ -693,6 +746,7 @@ static int palpak_open(
     uint8_t entry[PALPAK_ENTRY_SIZE];
     const uint8_t magic[8] = {'P', 'A', 'L', '9', '5', '8', '8', 0};
     const char *name;
+    palpak_archive_t *archive;
     uint32_t version;
     uint32_t count;
     uint32_t directory_offset;
@@ -708,26 +762,31 @@ static int palpak_open(
     name = palpak_basename(path);
     if (!*name) return 0;
 
-    handle = g_palpak_handle;
+    archive = palpak_archive_for_name(name);
+    if (!palpak_archive_available(archive)) {
+        g_palpak_last_error = 2;
+        return 0;
+    }
+
+    handle = archive->handle;
     if (!bda_fs_file_is_valid(handle)) {
-        handle = bda_fs_fopen_raw(PALPAK_PATH, "rb");
+        handle = bda_fs_fopen_raw(archive->path, "rb");
         if (!bda_fs_file_is_valid(handle)) {
             g_palpak_last_error = 2;
+            if (archive->optional) archive->available = 0;
             return 0;
         }
-        g_palpak_handle = handle;
+        archive->handle = handle;
     }
     if (bda_fs_seek_raw(handle, 0, BDA_SEEK_SET) < 0) {
         g_palpak_last_error = 3;
-        (void)bda_fs_close_raw(handle);
-        g_palpak_handle = 0;
+        palpak_archive_close(archive);
         return 0;
     }
     if (bda_fs_fread_raw(header, 1u, sizeof(header), handle) !=
         (int)sizeof(header) || memcmp(header, magic, sizeof(magic)) != 0) {
         g_palpak_last_error = 3;
-        (void)bda_fs_close_raw(handle);
-        g_palpak_handle = 0;
+        palpak_archive_close(archive);
         return 0;
     }
 
@@ -745,8 +804,7 @@ static int palpak_open(
                         15u) & ~15u) ||
         physical_size < 0 || archive_size != (uint32_t)physical_size) {
         g_palpak_last_error = 4;
-        (void)bda_fs_close_raw(handle);
-        g_palpak_handle = 0;
+        palpak_archive_close(archive);
         return 0;
     }
 
@@ -762,8 +820,7 @@ static int palpak_open(
             bda_fs_fread_raw(entry, 1u, sizeof(entry), handle) !=
                 (int)sizeof(entry)) {
             g_palpak_last_error = 5;
-            (void)bda_fs_close_raw(handle);
-            g_palpak_handle = 0;
+            palpak_archive_close(archive);
             return 0;
         }
         if (!palpak_name_matches(entry, name)) continue;
@@ -774,8 +831,7 @@ static int palpak_open(
             size > archive_size || offset > archive_size - size ||
             bda_fs_seek_raw(handle, (int32_t)offset, BDA_SEEK_SET) < 0) {
             g_palpak_last_error = 6;
-            (void)bda_fs_close_raw(handle);
-            g_palpak_handle = 0;
+            palpak_archive_close(archive);
             return 0;
         }
         *handle_out = handle;
@@ -800,13 +856,17 @@ FILE *fopen(const char *path, const char *mode)
 
     /*
      * The 9588 filesystem invalidates an existing file handle after some
-     * failed opens.  Search the package before probing optional loose files
-     * so the shared archive handle remains usable throughout startup.
+     * failed opens.  Search the selected package before probing optional
+     * loose files so shared archive handles remain usable throughout startup.
      */
     if (read_only &&
         palpak_open(path, &handle, &packed_base, &packed_size)) {
         packed = 1;
     } else {
+        if (read_only && palpak_is_video_name(palpak_basename(path)) &&
+            !palpak_path_exists(path)) {
+            return 0;
+        }
         handle = bda_fs_fopen_raw(path, mode);
         if (!bda_fs_file_is_valid(handle)) return 0;
     }
@@ -1005,6 +1065,10 @@ int access(const char *path, int mode)
     uint32_t packed_size;
     (void)mode;
     if (palpak_open(path, &file, &packed_base, &packed_size)) return 0;
+    if (palpak_is_video_name(palpak_basename(path)) &&
+        !palpak_path_exists(path)) {
+        return -1;
+    }
     file = bda_fs_fopen_raw(path, "rb");
     if (!bda_fs_file_is_valid(file)) return -1;
     (void)bda_fs_close_raw(file);

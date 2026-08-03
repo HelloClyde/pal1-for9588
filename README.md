@@ -21,21 +21,25 @@ git lfs install
 git clone --recurse-submodules git@github.com:HelloClyde/pal1-for9588.git
 cd pal1-for9588
 
-# 从私有 release 分支取一个原版资源包，离线转码并生成设备包
+# 从私有 release 分支取原版资源，生成主包和可选视频包
 .\tools\prepare-9588-resources.ps1
 
-# 构建原生 MIPS BDA，并把 BDA + 单资源包放入隔离 NAND 启动
+# 构建原生 MIPS BDA，并把主包 + 视频包放入隔离 NAND 启动
 .\tools\build.ps1
-.\tools\test-with-resources.ps1 .\build\PAL9588.PAK -ResetImage
+.\tools\test-with-resources.ps1 .\build\PAL9588.PAK `
+    -VideoPackage .\build\PALVIDEO.PAK -ResetImage
 ```
 
 输出文件：
 
 - `build\仙剑1.bda`：9588 原生程序；
-- `build\PAL9588.PAK`：设备端唯一需要的只读游戏资源包。
+- `build\PAL9588.PAK`：设备端必需的游戏主资源包；
+- `build\PALVIDEO.PAK`：包含六段 AVI 的可选视频资源包。
 
 真机安装时，将 `仙剑1.bda` 放到 `A:\应用\程序\`，将 `PAL9588.PAK` 放到
-`A:\应用\数据\PAL\`。存档、配置和诊断日志仍以普通可写文件保存在后一个目录。
+`A:\应用\数据\PAL\`。需要 PAL98 视频时再把 `PALVIDEO.PAK` 放到同一目录；不安装、
+删除或读取失败都会被安全忽略，游戏改用 SDLPAL 原有的 DOS RNG 片头与结局动画。
+存档、配置和诊断日志仍以普通可写文件保存在该目录。
 
 ## 当前状态
 
@@ -51,9 +55,9 @@ cd pal1-for9588
 - 已接入 SDLPAL 开源 Microsoft Video 1 解码器；六段 PAL98 AVI 在电脑端由质量可控
   的 4×4 块编码器保留原始 288×180 分辨率离线转码，设备端直接播放视频和 PCM
   音轨，不承担 H.264/MPEG-4 软解负担。
-- BDA 可从单个 `PAL9588.PAK` 随机读取全部 MKF、文本、字体和 AVI，不会先把包展开
-  到 NAND。
-- 模拟器已验证单包启动、AVI 与音频播放、存档重启读回、自动战斗胜利和六段视频
+- BDA 从 `PAL9588.PAK` 随机读取 MKF、文本和字体，并按需从可选的
+  `PALVIDEO.PAK` 读取 AVI；两个包都不会先展开到 NAND。
+- 模拟器已验证主包启动、可选 AVI 与音频播放、存档重启读回、自动战斗胜利和六段视频
   回归。真机性能、按键手感、扬声器表现及完整剧情仍需实体 9588 复测。
 
 ## 资源工作流
@@ -84,7 +88,7 @@ release-assets/PAL-ORIGINAL.PAK
 
 所有 staging 目录和资源输出都位于被 Git 忽略的 `build\` 下。
 
-### 设备单包
+### 设备资源包
 
 `prepare-9588-resources.ps1` 会执行以下操作：
 
@@ -92,19 +96,23 @@ release-assets/PAL-ORIGINAL.PAK
    `-OriginalPack` 指定本地包；
 2. 校验原版资源，使用 FFmpeg 解出 RGB555 帧和 PCM，再由本仓库的高质量 MS Video 1
    块编码器将 1–6 号 AVI 转为 288×180、12 fps、11025 Hz、8-bit mono PCM；
-3. 把核心资源与转码视频打成一个 `build\PAL9588.PAK` 并逐项校验 CRC32。
+3. 把核心资源打成必需的 `build\PAL9588.PAK`，把六段转码视频打成可选的
+   `build\PALVIDEO.PAK`，并分别逐项校验 CRC32。
 
-当前测试包包含 27 个条目（含新游戏初始模板 `0.RPG`），大小约 57.5 MiB。PAK
-采用未压缩、16-byte 对齐的目录格式，换取低内存和真正的随机读取；BDA 的
+当前主包包含 21 个条目（含新游戏初始模板 `0.RPG`），约 25.91 MiB；视频包包含
+6 个条目，约 31.60 MiB。PAK 采用未压缩、16-byte 对齐的目录格式，换取低内存和
+真正的随机读取；BDA 的
 `access`/`fopen`/`fread`/`fseek`/`ftell`
-会把包内条目作为普通只读文件暴露给未修改的 SDLPAL。包内文件优先于同名散文件，
-写入始终落到普通 NAND 文件。格式见 [docs/palpak-format.md](docs/palpak-format.md)。
+会把两个包内的条目作为普通只读文件暴露给未修改的 SDLPAL。视频包不存在时不会
+尝试打开不存在的文件，避免影响已打开的主包句柄；写入始终落到普通 NAND 文件。
+格式见 [docs/palpak-format.md](docs/palpak-format.md)。
 
 可单独使用打包工具：
 
 ```powershell
 python -S .\tools\palpak.py list .\build\PAL9588.PAK
 python -S .\tools\palpak.py verify .\build\PAL9588.PAK
+python -S .\tools\palpak.py verify .\build\PALVIDEO.PAK
 python -S .\tools\palpak.py extract .\build\PAL9588.PAK .\build\unpacked
 ```
 
@@ -134,7 +142,14 @@ $env:BDA_TOOLCHAIN_PREFIX = 'C:\toolchains\mips\bin\mipsel-none-elf-'
 .\tools\test-emulator.ps1 -ResetImage
 ```
 
-使用推荐的单包测试：
+使用主包和可选视频包测试：
+
+```powershell
+.\tools\test-with-resources.ps1 .\build\PAL9588.PAK `
+    -VideoPackage .\build\PALVIDEO.PAK -ResetImage
+```
+
+验证不安装视频包时的 DOS 动画回退路径：
 
 ```powershell
 .\tools\test-with-resources.ps1 .\build\PAL9588.PAK -ResetImage

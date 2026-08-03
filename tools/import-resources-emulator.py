@@ -40,6 +40,10 @@ def main() -> int:
         "--video-source", type=Path,
         help="optional directory containing compact 1.avi through 6.avi",
     )
+    parser.add_argument(
+        "--video-package", type=Path,
+        help="optional PALVIDEO.PAK containing 1.avi through 6.avi",
+    )
     args = parser.parse_args()
 
     source = args.source.resolve()
@@ -49,16 +53,24 @@ def main() -> int:
         raise SystemExit(f"Resource source does not exist: {source}")
     if not nand.is_file():
         raise SystemExit(f"Test NAND does not exist: {nand}")
+    if args.video_source is not None and args.video_package is not None:
+        raise SystemExit("Use either --video-source or --video-package, not both")
 
     if source.is_file():
         if args.video_source is not None:
-            raise SystemExit("--video-source cannot be used with PAL9588.PAK")
+            raise SystemExit(
+                "--video-source requires a traditional resource directory"
+            )
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from palpak import PalPakError, verify_archive
         try:
-            verify_archive(source)
+            main_entries = verify_archive(source)
         except PalPakError as exc:
             raise SystemExit(f"Invalid PAL9588.PAK: {exc}") from exc
+        if any(entry.name in VIDEO for entry in main_entries):
+            raise SystemExit(
+                "PAL9588.PAK must not contain AVI files; use PALVIDEO.PAK"
+            )
         selected = {"PAL9588.PAK": source}
     elif source.is_dir():
         files = {
@@ -95,6 +107,29 @@ def main() -> int:
                 "Missing transcoded videos: " + ", ".join(missing_video)
             )
         selected.update(videos)
+    if args.video_package is not None:
+        if not source.is_file():
+            raise SystemExit(
+                "--video-package requires PAL9588.PAK as the main source"
+            )
+        video_package = args.video_package.resolve()
+        if not video_package.is_file():
+            raise SystemExit(f"Video package does not exist: {video_package}")
+        try:
+            video_entries = verify_archive(video_package)
+        except PalPakError as exc:
+            raise SystemExit(f"Invalid PALVIDEO.PAK: {exc}") from exc
+        video_names = {entry.name for entry in video_entries}
+        if video_names != VIDEO:
+            missing = sorted(VIDEO - video_names)
+            extra = sorted(video_names - VIDEO)
+            details = []
+            if missing:
+                details.append("missing: " + ", ".join(missing))
+            if extra:
+                details.append("unexpected: " + ", ".join(extra))
+            raise SystemExit("Invalid PALVIDEO.PAK members (" + "; ".join(details) + ")")
+        selected["PALVIDEO.PAK"] = video_package
     expected = {
         name: {"size": path.stat().st_size, "sha256": digest(path)}
         for name, path in selected.items()
