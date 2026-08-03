@@ -16,8 +16,33 @@
 #define LOGICAL_HEIGHT 240
 #define PHYSICAL_WIDTH 240
 #define PHYSICAL_HEIGHT 320
+#define ROTATE_CCW_PHYSICAL_X(logical_y) (logical_y)
+#define ROTATE_CCW_PHYSICAL_Y(logical_x) \
+    (LOGICAL_WIDTH - 1 - (logical_x))
+#define ROTATE_CCW_INDEX(logical_x, logical_y) \
+    (ROTATE_CCW_PHYSICAL_Y(logical_x) * PHYSICAL_WIDTH + \
+     ROTATE_CCW_PHYSICAL_X(logical_y))
 #define EXIT_SHORTCUT_HOLD_MS 1500u
 #define EXIT_SHORTCUT_KEYS ((1u << 4) | (1u << 5))
+
+_Static_assert(
+    ROTATE_CCW_INDEX(0, 0) == PHYSICAL_WIDTH * (PHYSICAL_HEIGHT - 1),
+    "CCW top-left"
+);
+_Static_assert(
+    ROTATE_CCW_INDEX(LOGICAL_WIDTH - 1, 0) == 0,
+    "CCW top-right"
+);
+_Static_assert(
+    ROTATE_CCW_INDEX(0, LOGICAL_HEIGHT - 1) ==
+        PHYSICAL_WIDTH * PHYSICAL_HEIGHT - 1,
+    "CCW bottom-left"
+);
+_Static_assert(
+    ROTATE_CCW_INDEX(LOGICAL_WIDTH - 1, LOGICAL_HEIGHT - 1) ==
+        PHYSICAL_WIDTH - 1,
+    "CCW bottom-right"
+);
 
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
@@ -44,14 +69,14 @@ static unsigned read_input_keys(void)
     memset(&packet, 0, sizeof(packet));
     (void)bda_gui_input_packet(&packet);
 
-    /* The portrait LCD is viewed counter-clockwise in landscape. */
-    if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_RIGHT))
-        keys |= 1u << 0; /* logical up */
+    /* Match physical directions to the counter-clockwise framebuffer. */
     if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_LEFT))
+        keys |= 1u << 0; /* logical up */
+    if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_RIGHT))
         keys |= 1u << 1; /* logical down */
-    if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_UP))
-        keys |= 1u << 2; /* logical left */
     if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_DOWN))
+        keys |= 1u << 2; /* logical left */
+    if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_UP))
         keys |= 1u << 3; /* logical right */
     if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_ENTER))
         keys |= 1u << 4;
@@ -286,8 +311,8 @@ void pal9588_platform_present(const SDL_Surface *surface)
         const uint8_t *source =
             (const uint8_t *)surface->pixels + y * surface->pitch;
         for (x = 0; x < LOGICAL_WIDTH; ++x) {
-            int physical_x = LOGICAL_HEIGHT - 1 - y;
-            int physical_y = x;
+            int physical_x = ROTATE_CCW_PHYSICAL_X(y);
+            int physical_y = ROTATE_CCW_PHYSICAL_Y(x);
             uint8_t index = source[x];
             g_pixels[physical_y * PHYSICAL_WIDTH + physical_x] =
                 rgb565(surface->format->palette->colors[index]);
@@ -319,10 +344,10 @@ void pal9588_platform_present_rgb555(
         int source_y = y * height / target_height;
         const Uint16 *source = pixels + source_y * pitch_pixels;
         int logical_y = target_y + y;
-        int physical_x = LOGICAL_HEIGHT - 1 - logical_y;
+        int physical_x = ROTATE_CCW_PHYSICAL_X(logical_y);
         for (x = 0; x < target_width; ++x) {
             int source_x = x * width / target_width;
-            int physical_y = x;
+            int physical_y = ROTATE_CCW_PHYSICAL_Y(x);
             g_pixels[physical_y * PHYSICAL_WIDTH + physical_x] =
                 rgb555_to_rgb565(source[source_x]);
         }
