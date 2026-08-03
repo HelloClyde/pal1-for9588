@@ -1,0 +1,133 @@
+name: Build BDA
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-bda-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Build native BDA
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out sources and submodules
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: true
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Cache MIPS toolchain
+        uses: actions/cache@v6
+        with:
+          path: sdk/.toolchain
+          key: mipsel-toolchain-${{ runner.os }}-${{ hashFiles('sdk/scripts/setup_toolchain.ps1') }}
+
+      - name: Set up verified MIPS toolchain
+        shell: pwsh
+        run: .\sdk\scripts\setup_toolchain.ps1
+
+      - name: Build BDA
+        shell: pwsh
+        run: .\tools\build.ps1 -SkipToolchainSetup -Clean
+
+      - name: Verify output and write checksum
+        shell: pwsh
+        run: |
+          $bdaFiles = @(Get-ChildItem -LiteralPath .\build -Filter '*.bda' -File)
+          if ($bdaFiles.Count -ne 1) {
+            throw "Expected exactly one BDA, found $($bdaFiles.Count)."
+          }
+
+          $bda = $bdaFiles[0]
+          $hash = (Get-FileHash -LiteralPath $bda.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = Join-Path $bda.DirectoryName ($bda.Name + '.sha256')
+          "$hash  $($bda.Name)" | Set-Content -LiteralPath $checksumPath -Encoding utf8
+
+          "### BDA build" >> $env:GITHUB_STEP_SUMMARY
+          "- File: ``$($bda.Name)``" >> $env:GITHUB_STEP_SUMMARY
+          "- Size: $($bda.Length) bytes" >> $env:GITHUB_STEP_SUMMARY
+          "- SHA-256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload BDA artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pal1-bda
+          path: |
+            build/*.bda
+            build/*.bda.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    name: Publish tagged BDA
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download BDA artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: pal1-bda
+          path: release
+
+      - name: Create or update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $bdaFiles = @(Get-ChildItem -LiteralPath .\release -Filter '*.bda' -File)
+          if ($bdaFiles.Count -ne 1) {
+            throw "Expected exactly one downloaded BDA, found $($bdaFiles.Count)."
+          }
+
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --verify-tag `
+              --title $tag `
+              --generate-notes
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not create release $tag."
+            }
+          }
+
+          $bda = $bdaFiles[0]
+          $checksum = @(Get-ChildItem -LiteralPath .\release -Filter '*.bda.sha256' -File)
+          if ($checksum.Count -ne 1) {
+            throw "Expected exactly one BDA checksum, found $($checksum.Count)."
+          }
+          gh release upload $tag `
+            $bda.FullName `
+            $checksum[0].FullName `
+            --repo $env:GITHUB_REPOSITORY `
+            --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not upload BDA assets to release $tag."
+          }

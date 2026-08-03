@@ -134,6 +134,15 @@ $env:BDA_TOOLCHAIN_PREFIX = 'C:\toolchains\mips\bin\mipsel-none-elf-'
 输出同时包含 BDA、ELF、map 和反汇编文件。两个 submodule 必须停在仓库记录的提交；
 不要直接改用 SDLPAL 最新主线。
 
+### GitHub Actions
+
+`Build BDA` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 和手动触发时，
+使用固定的 submodule 提交构建 `仙剑1.bda`，并将 BDA 与 SHA-256 校验文件保存为
+30 天的 `pal1-bda` Artifact。推送 `v*` 标签时，它还会创建或更新同名 GitHub
+Release，并上传这两个文件。
+
+CI 只构建程序本体，不访问私有 `release` 分支，也不会打包或发布原版游戏资源。
+
 ## 模拟器测试
 
 只有 BDA、没有游戏资源的启动冒烟测试：
