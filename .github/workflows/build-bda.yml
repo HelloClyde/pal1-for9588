@@ -6,10 +6,13 @@ on:
       - main
     tags:
       - "v*"
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      build_resources:
+        description: Build PAL9588.PAK and PALVIDEO.PAK from the private release branch
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -80,10 +83,91 @@ jobs:
           compression-level: 0
           retention-days: 30
 
+  resources:
+    name: Build resource packages
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_resources)
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out resource conversion tools
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up Git LFS and FFmpeg
+        shell: pwsh
+        run: |
+          git lfs version
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Git LFS is unavailable on this runner.'
+          }
+          git lfs install --local
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not initialize Git LFS.'
+          }
+
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --yes --no-progress
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Could not install FFmpeg.'
+            }
+          }
+          ffmpeg -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) {
+            throw 'FFmpeg is unavailable on this runner.'
+          }
+
+      - name: Build PAL resource packages
+        shell: pwsh
+        run: |
+          .\tools\prepare-9588-resources.ps1 `
+            -ReleaseBranch release `
+            -Remote origin
+
+      - name: Write resource checksums
+        shell: pwsh
+        run: |
+          foreach ($name in @('PAL9588.PAK', 'PALVIDEO.PAK')) {
+            $path = Join-Path .\build $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Missing resource package: $name"
+            }
+            $file = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name" | Set-Content -LiteralPath ($path + '.sha256') -Encoding ascii
+
+            "- ${name}: $($file.Length) bytes" >> $env:GITHUB_STEP_SUMMARY
+            "- ${name} SHA-256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload resource package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pal1-resources
+          path: |
+            build/PAL9588.PAK
+            build/PAL9588.PAK.sha256
+            build/PALVIDEO.PAK
+            build/PALVIDEO.PAK.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
   release:
-    name: Publish tagged BDA
+    name: Publish tagged release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs:
+      - build
+      - resources
     runs-on: windows-latest
     permissions:
       contents: write
@@ -95,6 +179,12 @@ jobs:
           name: pal1-bda
           path: release
 
+      - name: Download resource package artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: pal1-resources
+          path: release
+
       - name: Create or update GitHub Release
         shell: pwsh
         env:
@@ -103,6 +193,24 @@ jobs:
           $bdaFiles = @(Get-ChildItem -LiteralPath .\release -Filter '*.bda' -File)
           if ($bdaFiles.Count -ne 1) {
             throw "Expected exactly one downloaded BDA, found $($bdaFiles.Count)."
+          }
+
+          $bda = $bdaFiles[0]
+          $assets = [System.Collections.Generic.List[string]]::new()
+          $assets.Add($bda.FullName)
+          $bdaChecksumName = $bda.Name + '.sha256'
+          foreach ($name in @(
+            $bdaChecksumName,
+            'PAL9588.PAK',
+            'PAL9588.PAK.sha256',
+            'PALVIDEO.PAK',
+            'PALVIDEO.PAK.sha256'
+          )) {
+            $path = Join-Path .\release $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Missing release asset: $name"
+            }
+            $assets.Add((Resolve-Path -LiteralPath $path).Path)
           }
 
           $tag = $env:GITHUB_REF_NAME
@@ -118,16 +226,11 @@ jobs:
             }
           }
 
-          $bda = $bdaFiles[0]
-          $checksum = @(Get-ChildItem -LiteralPath .\release -Filter '*.bda.sha256' -File)
-          if ($checksum.Count -ne 1) {
-            throw "Expected exactly one BDA checksum, found $($checksum.Count)."
-          }
-          gh release upload $tag `
-            $bda.FullName `
-            $checksum[0].FullName `
-            --repo $env:GITHUB_REPOSITORY `
-            --clobber
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not upload BDA assets to release $tag."
+          foreach ($asset in $assets) {
+            gh release upload $tag $asset `
+              --repo $env:GITHUB_REPOSITORY `
+              --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not upload release asset: $asset"
+            }
           }
