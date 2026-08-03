@@ -11,6 +11,7 @@ void pal9588_platform_present_rgb555(
 );
 void pal9588_platform_pump(void);
 unsigned pal9588_platform_keys(void);
+int pal9588_platform_take_tap(int *logical_x, int *logical_y);
 void pal9588_platform_wait_action_release(void);
 int pal9588_platform_detached(void);
 Uint32 pal9588_platform_ticks(void);

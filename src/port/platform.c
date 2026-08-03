@@ -22,8 +22,16 @@
 #define ROTATE_CCW_INDEX(logical_x, logical_y) \
     (ROTATE_CCW_PHYSICAL_Y(logical_x) * PHYSICAL_WIDTH + \
      ROTATE_CCW_PHYSICAL_X(logical_y))
+#define ROTATE_CCW_LOGICAL_X(physical_y) \
+    (LOGICAL_WIDTH - 1 - (physical_y))
+#define ROTATE_CCW_LOGICAL_Y(physical_x) (physical_x)
 #define EXIT_SHORTCUT_HOLD_MS 1500u
 #define EXIT_SHORTCUT_KEYS ((1u << 4) | (1u << 5))
+#define RAW_EVENTS_PER_SAMPLE 8u
+#define TAP_MAX_AGE_MS 500u
+#define TAP_MAX_HOLD_MS 750u
+#define TAP_MAX_TRAVEL 18
+#define TOUCH_ESCAPE_SUPPRESS_MS 120u
 
 _Static_assert(
     ROTATE_CCW_INDEX(0, 0) == PHYSICAL_WIDTH * (PHYSICAL_HEIGHT - 1),
@@ -43,6 +51,20 @@ _Static_assert(
         PHYSICAL_WIDTH - 1,
     "CCW bottom-right"
 );
+_Static_assert(
+    ROTATE_CCW_LOGICAL_X(ROTATE_CCW_PHYSICAL_Y(0)) == 0 &&
+        ROTATE_CCW_LOGICAL_Y(ROTATE_CCW_PHYSICAL_X(0)) == 0,
+    "CCW inverse top-left"
+);
+_Static_assert(
+    ROTATE_CCW_LOGICAL_X(
+        ROTATE_CCW_PHYSICAL_Y(LOGICAL_WIDTH - 1)
+    ) == LOGICAL_WIDTH - 1 &&
+        ROTATE_CCW_LOGICAL_Y(
+            ROTATE_CCW_PHYSICAL_X(LOGICAL_HEIGHT - 1)
+        ) == LOGICAL_HEIGHT - 1,
+    "CCW inverse bottom-right"
+);
 
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
@@ -59,6 +81,15 @@ static uint16_t *g_pixels;
 static bda_gui_framebuffer_t g_framebuffer;
 static int g_direct_framebuffer;
 static bda_gui_picture_t g_picture;
+static int g_touch_active;
+static int g_touch_start_x;
+static int g_touch_start_y;
+static Uint32 g_touch_started;
+static Uint32 g_touch_escape_until;
+static int g_tap_pending;
+static int g_tap_logical_x;
+static int g_tap_logical_y;
+static Uint32 g_tap_time;
 
 int pal9588_pak_last_error(void);
 
@@ -80,9 +111,84 @@ static unsigned read_input_keys(void)
         keys |= 1u << 3; /* logical right */
     if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_ENTER))
         keys |= 1u << 4;
-    if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_ESCAPE))
+    if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_ESCAPE) &&
+        !g_touch_active &&
+        (Sint32)(pal9588_platform_ticks() - g_touch_escape_until) >= 0)
         keys |= 1u << 5;
     return keys;
+}
+
+static int absolute_int(int value)
+{
+    return value < 0 ? -value : value;
+}
+
+static void read_touch_position(int *physical_x, int *physical_y)
+{
+    u16 x = 0;
+    u16 y = 0;
+    bda_gui_touch_position(&x, &y);
+    if (x >= PHYSICAL_WIDTH) x = PHYSICAL_WIDTH - 1;
+    if (y >= PHYSICAL_HEIGHT) y = PHYSICAL_HEIGHT - 1;
+    *physical_x = (int)x;
+    *physical_y = (int)y;
+}
+
+static void queue_logical_tap(int physical_x, int physical_y, Uint32 now)
+{
+    /* Inverse of logical (x, y) -> physical (y, 319 - x). */
+    g_tap_logical_x = ROTATE_CCW_LOGICAL_X(physical_y);
+    g_tap_logical_y = ROTATE_CCW_LOGICAL_Y(physical_x);
+    g_tap_time = now;
+    g_tap_pending = 1;
+}
+
+static void poll_raw_touch_events(void)
+{
+    unsigned count = 0;
+    bda_gui_raw_event_t event;
+
+    /* The raw stream and the fallback window pump must not compete. */
+    if (!g_direct_framebuffer) {
+        g_touch_active = 0;
+        return;
+    }
+
+    while (count++ < RAW_EVENTS_PER_SAMPLE &&
+           bda_gui_raw_event_fetch(&event) >= 0) {
+        Uint32 now = pal9588_platform_ticks();
+        int x;
+        int y;
+        switch ((u32)event.code) {
+        case BDA_INPUT_EVENT_TOUCH_DOWN:
+            read_touch_position(&x, &y);
+            g_touch_active = 1;
+            g_touch_start_x = x;
+            g_touch_start_y = y;
+            g_touch_started = now;
+            g_touch_escape_until = now + TOUCH_ESCAPE_SUPPRESS_MS;
+            break;
+        case BDA_INPUT_EVENT_TOUCH_MOVE:
+            if (g_touch_active) {
+                read_touch_position(&x, &y);
+                g_touch_escape_until = now + TOUCH_ESCAPE_SUPPRESS_MS;
+            }
+            break;
+        case BDA_INPUT_EVENT_TOUCH_UP:
+            read_touch_position(&x, &y);
+            if (g_touch_active &&
+                (Uint32)(now - g_touch_started) <= TAP_MAX_HOLD_MS &&
+                absolute_int(x - g_touch_start_x) <= TAP_MAX_TRAVEL &&
+                absolute_int(y - g_touch_start_y) <= TAP_MAX_TRAVEL) {
+                queue_logical_tap(x, y, now);
+            }
+            g_touch_active = 0;
+            g_touch_escape_until = now + TOUCH_ESCAPE_SUPPRESS_MS;
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 static void update_close_shortcut(unsigned keys)
@@ -103,7 +209,9 @@ static void update_close_shortcut(unsigned keys)
 
 static void sample_input_keys(void)
 {
-    unsigned keys = read_input_keys();
+    unsigned keys;
+    poll_raw_touch_events();
+    keys = read_input_keys();
     update_close_shortcut(keys);
     g_latched_keys |= keys & ~g_sampled_keys;
     g_sampled_keys = keys;
@@ -176,6 +284,15 @@ int pal9588_platform_open(void)
     g_exit_shortcut_started = 0;
     g_exit_shortcut_active = 0;
     g_close_requested = 0;
+    g_touch_active = 0;
+    g_touch_start_x = 0;
+    g_touch_start_y = 0;
+    g_touch_started = 0;
+    g_touch_escape_until = 0;
+    g_tap_pending = 0;
+    g_tap_logical_x = 0;
+    g_tap_logical_y = 0;
+    g_tap_time = 0;
     g_pixels = (uint16_t *)malloc(
         PHYSICAL_WIDTH * PHYSICAL_HEIGHT * sizeof(*g_pixels)
     );
@@ -381,6 +498,21 @@ unsigned pal9588_platform_keys(void)
     keys = g_sampled_keys | g_latched_keys;
     g_latched_keys = 0;
     return keys;
+}
+
+int pal9588_platform_take_tap(int *logical_x, int *logical_y)
+{
+    Uint32 now;
+    if (!logical_x || !logical_y || !g_tap_pending) return 0;
+    now = pal9588_platform_ticks();
+    if ((Uint32)(now - g_tap_time) > TAP_MAX_AGE_MS) {
+        g_tap_pending = 0;
+        return 0;
+    }
+    *logical_x = g_tap_logical_x;
+    *logical_y = g_tap_logical_y;
+    g_tap_pending = 0;
+    return 1;
 }
 
 void pal9588_platform_wait_action_release(void)

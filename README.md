@@ -12,17 +12,22 @@ SDLPAL 都以固定提交的 submodule 引入；发布产物是固件直接执�
 
 ## 快速开始
 
-以下流程适用于有该私有仓库和私有 `release` 分支访问权的开发者。需要 Git、Git
-LFS、PowerShell、Python 3.10+、FFmpeg，以及默认位于
-`E:\bbk9588-emulator-v0.1.5` 的模拟器。
+以下流程适用于拥有合法《仙剑奇侠传》经典版资源的用户。需要 Git、PowerShell、
+Python 3.10+ 和 FFmpeg；只有运行模拟器测试时才需要
+`bbk9588-emulator v0.1.5`。
 
 ```powershell
-git lfs install
-git clone --recurse-submodules git@github.com:HelloClyde/pal1-for9588.git
+git clone --recurse-submodules https://github.com/HelloClyde/pal1-for9588.git
 cd pal1-for9588
 
-# 从私有 release 分支取原版资源，生成主包和可选视频包
-.\tools\prepare-9588-resources.ps1
+# Steam 经典版安装目录中应同时包含 PAL_DOS 和 PAL98
+$palRoot = 'D:\Program Files (x86)\Steam\steamapps\common\PAL'
+
+# 从自己的原版文件生成 9588 主资源包和可选视频包
+.\tools\pack-original-resources.ps1 `
+    -DosPath "$palRoot\PAL_DOS" -Pal98Path "$palRoot\PAL98"
+.\tools\prepare-9588-resources.ps1 `
+    -OriginalPack .\build\PAL-ORIGINAL.PAK
 
 # 构建原生 MIPS BDA，并把主包 + 视频包放入隔离 NAND 启动
 .\tools\build.ps1
@@ -41,6 +46,14 @@ cd pal1-for9588
 删除或读取失败都会被安全忽略，游戏改用 SDLPAL 原有的 DOS RNG 片头与结局动画。
 存档、配置和诊断日志仍以普通可写文件保存在该目录。
 
+## 操作
+
+- 实体方向键移动，Enter 调查/确认，Esc 打开菜单/返回；Enter + Esc 长按 1.5 秒退出。
+- 在自由行动地图上轻触目标位置会自动绕开地图障碍和阻挡物前往最近可达点；轻触可调查
+  的 NPC 或物件，会在走近后自动面向并调查。
+- 自动行走期间按任意实体方向键、Enter 或 Esc 会立即取消；战斗、菜单、对话和切换场景
+  期间不会启动寻路。滑动不视为点击，以免误触。
+
 ## 当前状态
 
 - 完整 SDLPAL 游戏、地图、脚本、UI、战斗和存档核心参与构建。
@@ -50,6 +63,8 @@ cd pal1-for9588
   SDK 拒绝当前固件布局或提交失败时，自动回退到原有 picture 渲染路径。
 - direct framebuffer 模式下实体键直接读取 SDK input packet，运行期不再进入慢速
   窗口消息队列；同时长按 Enter + Esc 1.5 秒可安全退出并在关闭阶段处理 detach。
+- 触摸同样从 SDK 原始事件流读取，不恢复窗口消息泵；坐标按逆时针横屏方向反算，地图
+  点击使用 SDLPAL 原生地图与事件物件碰撞判断执行轻量自动寻路。
 - 已接入 22050 Hz、16-bit、单声道 PCM：RIX/OPL 音乐和 DOS VOC/Win95 WAV
   音效由 SDLPAL 解码、混音后送入 SDK 队列。
 - 已接入 SDLPAL 开源 Microsoft Video 1 解码器；六段 PAL98 AVI 在电脑端由质量可控
@@ -60,40 +75,29 @@ cd pal1-for9588
 - 模拟器已验证主包启动、可选 AVI 与音频播放、存档重启读回、自动战斗胜利和六段视频
   回归。真机性能、按键手感、扬声器表现及完整剧情仍需实体 9588 复测。
 
-## 资源工作流
+## 从原版仙剑 98 制作资源包
 
-### 私有原版包
-
-`main` 和正常开发分支不包含商业资源。用户合法购买的原版数据只保存在同一私有
-GitHub 仓库的 `release` 分支中：
-
-```text
-release-assets/PAL-ORIGINAL.PAK
-```
-
-该文件由 Git LFS 管理，是 DOS 版游戏数据和 PAL98 六段原始 AVI 合成的一个包。
-`release` 分支不得合并进 `main`，仓库改为公开前必须先删除该分支和对应 LFS 对象；
-资源版权不因存入私有仓库而改变。
-
-若没有 `release` 分支访问权，可以直接从自己安装的 Steam 经典版创建本地原版包：
+Steam《仙剑奇侠传》经典版安装目录通常同时包含 `PAL_DOS` 和 `PAL98`：前者提供
+游戏数据、音乐与音效，后者提供六段 98 版 AVI。其他合法版本也可以使用，只要这
+两个目录中的文件完整。将下面的 `$palRoot` 改成自己的安装位置：
 
 ```powershell
+$palRoot = 'D:\Program Files (x86)\Steam\steamapps\common\PAL'
+
 .\tools\pack-original-resources.ps1 `
-    -DosPath 'D:\Program Files (x86)\Steam\steamapps\common\PAL\PAL_DOS' `
-    -Pal98Path 'D:\Program Files (x86)\Steam\steamapps\common\PAL\PAL98'
+    -DosPath "$palRoot\PAL_DOS" `
+    -Pal98Path "$palRoot\PAL98"
 
 .\tools\prepare-9588-resources.ps1 `
     -OriginalPack .\build\PAL-ORIGINAL.PAK
 ```
 
-所有 staging 目录和资源输出都位于被 Git 忽略的 `build\` 下。
-
-### 设备资源包
+第一条命令只在被 Git 忽略的 `build\` 目录生成转换用中间文件；第二条命令直接
+生成设备需要的两个资源包。脚本不会联网下载、上传或提交任何原版游戏文件。
 
 `prepare-9588-resources.ps1` 会执行以下操作：
 
-1. 从私有 `release` 分支通过 Git LFS 取得 `PAL-ORIGINAL.PAK`，或使用
-   `-OriginalPack` 指定本地包；
+1. 校验用户从自己游戏目录生成的本地中间包；
 2. 校验原版资源，使用 FFmpeg 解出 RGB555 帧和 PCM，再由本仓库的高质量 MS Video 1
    块编码器将 1–6 号 AVI 转为 288×180、12 fps、11025 Hz、8-bit mono PCM；
 3. 把核心资源打成必需的 `build\PAL9588.PAK`，把六段转码视频打成可选的
@@ -134,23 +138,6 @@ $env:BDA_TOOLCHAIN_PREFIX = 'C:\toolchains\mips\bin\mipsel-none-elf-'
 输出同时包含 BDA、ELF、map 和反汇编文件。两个 submodule 必须停在仓库记录的提交；
 不要直接改用 SDLPAL 最新主线。
 
-### GitHub Actions
-
-`Build BDA` workflow 会在 `main` 推送和手动触发时，
-使用固定的 submodule 提交构建 `仙剑1.bda`，并将 BDA 与 SHA-256 校验文件保存为
-30 天的 `pal1-bda` Artifact。手动运行时勾选 `build_resources`，还会从私有
-`release` 分支通过 Git LFS 取得 `PAL-ORIGINAL.PAK`，生成 30 天的
-`pal1-resources` Artifact，其中包含 `PAL9588.PAK`、`PALVIDEO.PAK` 和各自的
-SHA-256 校验文件。
-
-推送 `v*` 标签时会自动执行以上两条构建链，创建或更新同名 GitHub Release，并
-上传 BDA、两个资源包和三个独立校验文件。普通 Pull Request 不触发该 workflow；
-资源 job 也不会缓存任何原始或转换后的游戏数据。
-
-GitHub 会移除 Release 附件文件名中的中文字符，因此发布时使用可稳定下载的
-`PAL1-9588-<版本>.bda`，并将附件显示标签设为 `仙剑1.bda`；BDA 内部应用名称和
-本地构建产物仍为 `仙剑1` / `仙剑1.bda`。
-
 ## 模拟器测试
 
 只有 BDA、没有游戏资源的启动冒烟测试：
@@ -185,6 +172,6 @@ GitHub 会移除 Release 附件文件名中的中文字符，因此发布时使�
 
 移植代码采用 GPL-3.0-or-later。SDLPAL 完整许可见
 `third_party/sdlpal/gpl.txt`，SDK 许可见 `sdk/LICENSE`。商业游戏资源不属于本项目
-许可证，只能由拥有合法副本且获准访问私有仓库的人使用。
+许可证，只能由拥有合法副本的用户自行提取和使用。
 
 参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。

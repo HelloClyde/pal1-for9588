@@ -52,6 +52,18 @@ direct framebuffer 后，`SDL_PollEvent` 和 `SDL_Delay` 的运行期热路径�
 接收 `DRAW_CONTEXT_DETACH`，但不会让慢速窗口队列限制每帧速度。同时长按
 Enter + Esc 1.5 秒会产生 SDL quit，作为不依赖窗口消息的原生安全退出手势。
 
+触摸在 direct framebuffer 路径中使用 SDK `bda_gui_raw_event_fetch()` 的
+down/move/up 事件维护生命周期，并用 `bda_gui_touch_position()` 取得 240×320 物理
+坐标。端口层只把短距离松手转换成一次 320×240 游戏坐标点击，同时过滤固件触摸期间
+可能出现的伪 Esc；picture 回退路径不读取原始流，避免和窗口消息泵竞争。
+
+`src/port/autopath.c` 在主地图帧外包裹 `PAL_StartFrame()`。点击位置先换算为当前世界
+坐标，再在角色可达的等距网格上做有界 BFS；每个候选节点都调用 SDLPAL 原有的
+`PAL_CheckObstacle()`，所以地图阻挡和当前场景事件物件共用游戏本身的判定。路径每帧
+只注入一步方向，实际移动后才推进；阻挡变化时最多重算两次，实体操作、战斗、切场景
+或剧情状态会取消。轻触可调查物件时，终点取最近可达位置，并复用 `PAL_Search()` 完成
+面向与交互。
+
 游戏资源、存档和配置统一位于 `A:\应用\数据\PAL\`。固件文件 API 接收
 ASCII/GBK byte string，代码中的中文目录显式写为 GBK 转义字节，不依赖源文件编码。
 

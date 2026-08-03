@@ -96,6 +96,7 @@ $portSources = @(
     'src\libc\runtime.c',
     'src\compat\mini_sdl.c',
     'src\port\platform.c',
+    'src\port\autopath.c',
     'src\port\audio_stub.c',
     'src\port\avi_9588.c',
     'src\port\pal_utils.c',
@@ -179,6 +180,9 @@ foreach ($source in $sources) {
     }
     if ($source -ieq (Join-Path $sdlpalRoot 'game.c')) {
         $language += '-DPAL_GameMain=PAL9588_InternalGameMain'
+    }
+    if ($source -ieq (Join-Path $sdlpalRoot 'play.c')) {
+        $language += '-DPAL_StartFrame=PAL9588_InternalStartFrame'
     }
     Write-Host "CC $relative"
     Invoke-Checked $compiler @($common + $language + @(
