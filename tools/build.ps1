@@ -213,6 +213,7 @@ Invoke-Checked $objcopy @('-O', 'binary', $elf, $raw)
 if ($LASTEXITCODE -ne 0) { throw 'objdump 失败' }
 
 Invoke-Checked $python @(
+    '-X', 'utf8',
     '-s',
     (Join-Path $PSScriptRoot 'pack-prelinked.py'),
     $raw,
