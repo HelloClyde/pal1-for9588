@@ -195,12 +195,21 @@ jobs:
             throw "Expected exactly one downloaded BDA, found $($bdaFiles.Count)."
           }
 
+          $tag = $env:GITHUB_REF_NAME
           $bda = $bdaFiles[0]
+          $publishedBdaName = "PAL1-9588-$tag.bda"
+          $publishedBda = Join-Path .\release $publishedBdaName
+          Copy-Item -LiteralPath $bda.FullName -Destination $publishedBda -Force
+          $publishedBdaChecksum = $publishedBda + '.sha256'
+          $publishedBdaHash =
+            (Get-FileHash -LiteralPath $publishedBda -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$publishedBdaHash  $publishedBdaName" |
+            Set-Content -LiteralPath $publishedBdaChecksum -Encoding ascii
+
           $assets = [System.Collections.Generic.List[string]]::new()
-          $assets.Add($bda.FullName)
-          $bdaChecksumName = $bda.Name + '.sha256'
+          $assets.Add("$publishedBda#仙剑1.bda")
+          $assets.Add("$publishedBdaChecksum#仙剑1.bda.sha256")
           foreach ($name in @(
-            $bdaChecksumName,
             'PAL9588.PAK',
             'PAL9588.PAK.sha256',
             'PALVIDEO.PAK',
@@ -213,7 +222,6 @@ jobs:
             $assets.Add((Resolve-Path -LiteralPath $path).Path)
           }
 
-          $tag = $env:GITHUB_REF_NAME
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag `
