@@ -242,6 +242,8 @@ BATTLE WON
 - `PORTTEST.SAVE`：两次启动完成写档和重启读回；
 - `PORTTEST.BATTLE`：运行单敌人自动攻击战斗；
 - `PORTTEST.VIDEO`：跳过启动用 1、2 号片段，完整顺序播放 3–6 号；
+- `PORTTEST.SOUND`：播放酒剑仙事件使用的 93 号夜间更鼓并记录循环最大耗时、
+  按键和触摸输入计数；
 - `PORTTEST.LOG`：测试过程和结果日志；存档测试另用 `PORTTEST.EXPECT` 保存预期值。
 
 这些标记仅供隔离 NAND/真机测试使用，普通玩家不要创建；测试结束应删除标记。商业
@@ -253,6 +255,9 @@ BATTLE WON
 - SDK PCM：22050 Hz、signed 16-bit、mono，2048 samples/block；
 - RIX 音乐：新版 DOSBox DBOPL 实时合成；
 - 音效：`VOC.MKF` 由 SDLPAL 的 VOC/WAV 播放器解码、重采样并与音乐混音；
+- 2026-08-08 使用 `PORTTEST.SOUND` 播放酒剑仙事件连续调用的 93 号 6000 Hz 更鼓；
+  5 秒内完成 4987 次循环，单次最大耗时 5 ms，同时接收 2 次按键和 4 次触摸，日志为
+  `SOUND INPUT PASS`；
 - 模拟器音频状态为 `playing=true`，传输丢包为 0；
 - 一段稳态观测窗口输出 532243 个 sample，其中 17408 个 underrun，约 3.3%；
 - 片头重解压曾出现约 0.91 秒的最大续 DMA 间隔，因此模拟器中仍可能听到一次

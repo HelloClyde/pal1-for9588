@@ -1,5 +1,6 @@
 #include "main.h"
 #include "pal_config.h"
+#include "platform.h"
 #include "regression.h"
 
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #define SAVE_MARKER   PAL_9588_DATA_PATH "PORTTEST.SAVE"
 #define BATTLE_MARKER PAL_9588_DATA_PATH "PORTTEST.BATTLE"
 #define VIDEO_MARKER  PAL_9588_DATA_PATH "PORTTEST.VIDEO"
+#define SOUND_MARKER  PAL_9588_DATA_PATH "PORTTEST.SOUND"
 #define TEST_LOG      PAL_9588_DATA_PATH "PORTTEST.LOG"
 #define SAVE_EXPECT   PAL_9588_DATA_PATH "PORTTEST.EXPECT"
 
@@ -28,7 +30,8 @@ enum
     REGRESSION_NONE,
     REGRESSION_SAVE,
     REGRESSION_BATTLE,
-    REGRESSION_VIDEO
+    REGRESSION_VIDEO,
+    REGRESSION_SOUND
 };
 
 static int g_regression_mode;
@@ -48,7 +51,7 @@ static int file_exists(const char *path)
 int pal9588_regression_active(void)
 {
     return file_exists(SAVE_MARKER) || file_exists(BATTLE_MARKER) ||
-        file_exists(VIDEO_MARKER);
+        file_exists(VIDEO_MARKER) || file_exists(SOUND_MARKER);
 }
 
 int pal9588_regression_auto_battle(void)
@@ -194,6 +197,43 @@ static void run_battle_regression(void)
     PAL_Shutdown(result == kBattleResultWon ? 0 : 4);
 }
 
+static void run_sound_regression(void)
+{
+    const Uint32 duration = 5000u;
+    Uint32 started;
+    Uint32 maximum_iteration = 0u;
+    unsigned iterations = 0u;
+    unsigned key_events = 0u;
+    unsigned taps = 0u;
+    SDL_Event event;
+    char line[96];
+
+    reset_log("SOUND START");
+    AUDIO_PlayMusic(0, FALSE, 0);
+    /* The six night-watch drum hits before meeting the Sword Master use 93. */
+    AUDIO_PlaySound(93);
+    started = SDL_GetTicks();
+    while ((Uint32)(SDL_GetTicks() - started) < duration) {
+        Uint32 before = SDL_GetTicks();
+        int x;
+        int y;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_KEYDOWN) ++key_events;
+        }
+        if (pal9588_platform_take_tap(&x, &y)) ++taps;
+        SDL_Delay(1u);
+        before = SDL_GetTicks() - before;
+        if (before > maximum_iteration) maximum_iteration = before;
+        ++iterations;
+    }
+    snprintf(line, sizeof(line),
+        "SOUND ITERATIONS %u MAX_MS %u KEYS %u TAPS %u",
+        iterations, maximum_iteration, key_events, taps);
+    append_log(line);
+    append_log((key_events || taps) ? "SOUND INPUT PASS" : "SOUND INPUT NONE");
+    PAL_Shutdown(0);
+}
+
 VOID PAL_GameMain(VOID)
 {
     if (file_exists(SAVE_MARKER)) {
@@ -207,6 +247,10 @@ VOID PAL_GameMain(VOID)
     if (file_exists(BATTLE_MARKER)) {
         g_regression_mode = REGRESSION_BATTLE;
         run_battle_regression();
+    }
+    if (file_exists(SOUND_MARKER)) {
+        g_regression_mode = REGRESSION_SOUND;
+        run_sound_regression();
     }
     g_regression_mode = REGRESSION_NONE;
     PAL9588_InternalGameMain();

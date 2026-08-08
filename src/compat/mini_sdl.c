@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define AUDIO_READY_POLL_LIMIT 1000000u
+#define AUDIO_PUMP_BLOCK_LIMIT 4u
 
 static char g_error[96];
 static SDL_VideoInfo g_video_info;
@@ -35,11 +36,12 @@ static void audio_pump(void)
         return;
     }
     /*
-     * Keep the firmware queue full.  Rendering a rotated 320x200 frame can
-     * approach one 4096-byte (about 93 ms) PCM block on 9588, so limiting a
-     * pump to one or two blocks causes audible gaps.
+     * Keep a short cushion in the firmware queue without monopolizing the
+     * single game/input thread. Four 4096-byte blocks cover about 372 ms at
+     * 22050 Hz, which tolerates a slow rendered frame while bounding one pump
+     * when a sound effect has to be mixed and resampled.
      */
-    while (blocks++ < 32u && bda_audio_ready()) {
+    while (blocks++ < AUDIO_PUMP_BLOCK_LIMIT && bda_audio_ready()) {
         int written;
         g_audio_spec.callback(
             g_audio_spec.userdata, g_audio_buffer, (int)g_audio_spec.size

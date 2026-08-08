@@ -1,4 +1,5 @@
 #include "main.h"
+#include "resampler.h"
 
 BOOL UTIL_GetScreenSize(DWORD *width, DWORD *height)
 {
@@ -23,6 +24,15 @@ INT UTIL_Platform_Init(int argc, char *argv[])
     gConfig.iSampleRate = 22050;
     gConfig.iOPLSampleRate = 22050;
     gConfig.wAudioBufferSize = 2048;
+    /*
+     * The DOS VOC archive contains many non-integer source rates (the night
+     * watch drum, sound 93, is 6000 Hz). The desktop default is the 32-tap
+     * SINC resampler, whose floating-point work stalls the single game/input
+     * thread on the soft-float JZ4730 while an effect is active. Linear
+     * interpolation keeps the original effect timing and is light enough to
+     * mix in real time without making keys or touch unresponsive.
+     */
+    gConfig.iResampleQuality = RESAMPLER_QUALITY_LINEAR;
     gConfig.eMusicType = MUSIC_RIX;
     gConfig.eOPLType = OPL_DOSBOX_NEW;
     gConfig.fUseSurroundOPL = FALSE;
